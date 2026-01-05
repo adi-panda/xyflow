@@ -52,7 +52,7 @@
   },
   "dependencies": {
     "@svelte-put/shortcut": "^4.1.0",
-    "@xyflow/system": "workspace:*"
+    "@xyflow/system": "link:../system"
   },
   "devDependencies": {
     "@eslint/compat": "^2.0.0",

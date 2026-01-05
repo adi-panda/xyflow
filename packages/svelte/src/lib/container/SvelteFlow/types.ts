@@ -344,12 +344,31 @@ export type SvelteFlowProps<
      */
     onlyRenderVisibleElements?: boolean;
     /**
+     * Buffer margin (as percentage of viewport dimensions) to keep elements rendered outside the visible viewport.
+     * This prevents rapid DOM updates when elements cross the viewport boundary during panning.
+     * Only applies when onlyRenderVisibleElements is true.
+     * - 0 = no buffer (elements removed immediately when out of view)
+     * - 0.1 = 10% buffer (recommended for smooth panning)
+     * - 0.2 = 20% buffer (best for fast panning, more elements rendered)
+     * @default 0.1
+     */
+    visibilityBuffer?: number;
+    /**
      * When enabled, batches viewport updates using requestAnimationFrame during panning to reduce DOM thrashing.
      * This improves performance when onlyRenderVisibleElements is true by coalescing rapid viewport changes.
      * Adds ~16ms latency (one frame) during panning but significantly reduces visibility recalculations.
      * @default true
      */
     batchViewportUpdates?: boolean;
+    /**
+     * Minimum time in milliseconds between viewport updates during panning. Only applies when batchViewportUpdates is true.
+     * Use this to reduce update frequency and prevent lag spikes with large graphs.
+     * - 0 = update every frame (~60fps, ~16ms between updates)
+     * - 33 = ~30fps (smoother performance, less smooth panning)
+     * - 66 = ~15fps (best performance, noticeable lag during pan)
+     * @default 0
+     */
+    viewportUpdateThrottle?: number;
     /**
      * You can enable this prop to automatically pan the viewport while making a new connection.
      * @default true

@@ -120,9 +120,9 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
     height = $state.raw<number>(signals.height ?? 0);
     zIndexMode = $state.raw<ZIndexMode>(signals.props.zIndexMode ?? 'basic');
 
-    // RAF batching for viewport updates during panning
-    private viewportBatcher: ViewportBatcher | null = null;
-    private isViewportUpdateFromInternal = false;
+    // RAF batching for viewport updates during panning (internal use only)
+    viewportBatcher: ViewportBatcher | null = null;
+    isViewportUpdateFromInternal = false;
 
     nodesInitialized: boolean = $derived.by(() => {
       const nodesInitialized = adoptUserNodes(signals.nodes, this.nodeLookup, this.parentLookup, {
@@ -234,6 +234,7 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
         connectionMode,
         onerror,
         onlyRenderVisibleElements,
+        visibilityBuffer,
         defaultEdgeOptions,
         zIndexMode
       } = this;
@@ -257,14 +258,15 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
         const { viewport, width, height } = this;
         const transform: Transform = [viewport.x, viewport.y, viewport.zoom];
 
-        visibleNodes = getVisibleNodes(nodeLookup, transform, width, height);
+        visibleNodes = getVisibleNodes(nodeLookup, transform, width, height, visibilityBuffer);
         visibleEdges = getLayoutedEdges({
           ...options,
           onlyRenderVisible: true,
           visibleNodes,
           transform,
           width,
-          height
+          height,
+          buffer: visibilityBuffer
         });
       } else {
         visibleNodes = this.nodeLookup;
@@ -398,7 +400,9 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
       });
     });
     onlyRenderVisibleElements: boolean = $derived(signals.props.onlyRenderVisibleElements ?? false);
+    visibilityBuffer: number = $derived(signals.props.visibilityBuffer ?? 0.1);
     batchViewportUpdates: boolean = $derived(signals.props.batchViewportUpdates ?? true);
+    viewportUpdateThrottle: number = $derived(signals.props.viewportUpdateThrottle ?? 0);
     onerror: OnError = $derived(signals.props.onflowerror ?? devWarn);
 
     ondelete?: OnDelete<NodeType, EdgeType> = $derived(signals.props.ondelete);
@@ -465,9 +469,12 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
     // Viewport batching lifecycle methods
     initViewportBatching() {
       if (!this.viewportBatcher) {
-        this.viewportBatcher = new ViewportBatcher((viewport) => {
-          this._viewport = viewport;
-        });
+        this.viewportBatcher = new ViewportBatcher(
+          (viewport) => {
+            this._viewport = viewport;
+          },
+          this.viewportUpdateThrottle
+        );
       }
     }
 

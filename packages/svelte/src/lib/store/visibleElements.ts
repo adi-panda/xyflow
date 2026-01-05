@@ -15,14 +15,27 @@ export function getVisibleNodes<NodeType extends Node = Node>(
   nodeLookup: NodeLookup<InternalNode<NodeType>>,
   transform: Transform,
   width: number,
-  height: number
+  height: number,
+  buffer = 0.1
 ) {
+  // Add buffer margin to viewport to prevent flickering at edges
+  const bufferX = width * buffer;
+  const bufferY = height * buffer;
+
   const visibleNodes = new Map<string, InternalNode<NodeType>>();
-  getNodesInside(nodeLookup, { x: 0, y: 0, width: width, height: height }, transform, true).forEach(
-    (node) => {
-      visibleNodes.set(node.id, node);
-    }
-  );
+  getNodesInside(
+    nodeLookup,
+    {
+      x: -bufferX,
+      y: -bufferY,
+      width: width + bufferX * 2,
+      height: height + bufferY * 2
+    },
+    transform,
+    true
+  ).forEach((node) => {
+    visibleNodes.set(node.id, node);
+  });
   return visibleNodes;
 }
 
@@ -58,6 +71,7 @@ export interface EdgeLayoutOnlyVisibleOptions<
   height: number;
   onlyRenderVisible: true;
   zIndexMode: ZIndexMode;
+  buffer: number;
 }
 
 export type EdgeLayoutOptions<NodeType extends Node = Node, EdgeType extends Edge = Edge> =
@@ -88,13 +102,18 @@ export function getLayoutedEdges<NodeType extends Node = Node, EdgeType extends 
     }
 
     if (onlyRenderVisible) {
-      const { visibleNodes, transform, width, height } = options;
+      const { visibleNodes, transform, width, height, buffer } = options;
+
+      // Apply buffer margin to viewport for edge visibility checks
+      const bufferX = width! * buffer;
+      const bufferY = height! * buffer;
+
       if (
         isEdgeVisible({
           sourceNode,
           targetNode,
-          width: width!,
-          height: height!,
+          width: width! + bufferX * 2,
+          height: height! + bufferY * 2,
           transform: transform!
         })
       ) {
