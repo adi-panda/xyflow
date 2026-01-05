@@ -344,6 +344,13 @@ export type SvelteFlowProps<
      */
     onlyRenderVisibleElements?: boolean;
     /**
+     * When enabled, batches viewport updates using requestAnimationFrame during panning to reduce DOM thrashing.
+     * This improves performance when onlyRenderVisibleElements is true by coalescing rapid viewport changes.
+     * Adds ~16ms latency (one frame) during panning but significantly reduces visibility recalculations.
+     * @default true
+     */
+    batchViewportUpdates?: boolean;
+    /**
      * You can enable this prop to automatically pan the viewport while making a new connection.
      * @default true
      */

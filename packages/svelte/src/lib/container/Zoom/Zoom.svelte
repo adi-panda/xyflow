@@ -33,9 +33,20 @@
   let onInitCalled = false;
   $effect(() => {
     if (!onInitCalled && store.viewportInitialized) {
+      // Initialize viewport batching if enabled
+      if (store.batchViewportUpdates) {
+        store.initViewportBatching();
+      }
       oninit?.();
       onInitCalled = true;
     }
+  });
+
+  // Cleanup effect to destroy batcher on unmount
+  $effect(() => {
+    return () => {
+      store.destroyViewportBatching();
+    };
   });
 </script>
 
@@ -54,7 +65,11 @@
     },
     onPanZoomStart: onmovestart,
     onPanZoom: onmove,
-    onPanZoomEnd: onmoveend,
+    onPanZoomEnd: (event, viewport) => {
+      // Flush pending viewport updates for pixel-perfect final positioning
+      store.viewportBatcher?.flush();
+      onmoveend?.(event, viewport);
+    },
     zoomOnScroll,
     zoomOnDoubleClick,
     zoomOnPinch,
@@ -72,7 +87,9 @@
     paneClickDistance,
     selectionOnDrag,
     onTransformChange: (transform: Transform) => {
+      store.setViewportUpdateSource(true);
       store.viewport = { x: transform[0], y: transform[1], zoom: transform[2] };
+      store.setViewportUpdateSource(false);
     },
     connectionInProgress: store.connection.inProgress
   }}

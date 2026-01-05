@@ -72,6 +72,7 @@ import type {
 import type { StoreSignals } from './types';
 import { MediaQuery } from 'svelte/reactivity';
 import { getLayoutedEdges, getVisibleNodes, type EdgeLayoutAllOptions } from './visibleElements';
+import { ViewportBatcher } from '$lib/utils/viewportBatcher';
 
 export const initialNodeTypes = {
   input: InputNode,
@@ -118,6 +119,10 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
     width = $state.raw<number>(signals.width ?? 0);
     height = $state.raw<number>(signals.height ?? 0);
     zIndexMode = $state.raw<ZIndexMode>(signals.props.zIndexMode ?? 'basic');
+
+    // RAF batching for viewport updates during panning
+    private viewportBatcher: ViewportBatcher | null = null;
+    private isViewportUpdateFromInternal = false;
 
     nodesInitialized: boolean = $derived.by(() => {
       const nodesInitialized = adoptUserNodes(signals.nodes, this.nodeLookup, this.parentLookup, {
@@ -340,10 +345,18 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
       return signals.viewport ?? this._viewport;
     }
     set viewport(newViewport: Viewport) {
+      // Handle controlled viewport mode
       if (signals.viewport) {
         signals.viewport = newViewport;
       }
-      this._viewport = newViewport;
+
+      // For internal viewport updates during pan/zoom, use batching if enabled
+      if (this.isViewportUpdateFromInternal && this.viewportBatcher && this.batchViewportUpdates) {
+        this.viewportBatcher.schedule(newViewport);
+      } else {
+        // Direct updates (from props or programmatic API calls) bypass batching
+        this._viewport = newViewport;
+      }
     }
 
     // _connection is viewport independent and originating from XYHandle
@@ -385,6 +398,7 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
       });
     });
     onlyRenderVisibleElements: boolean = $derived(signals.props.onlyRenderVisibleElements ?? false);
+    batchViewportUpdates: boolean = $derived(signals.props.batchViewportUpdates ?? true);
     onerror: OnError = $derived(signals.props.onflowerror ?? devWarn);
 
     ondelete?: OnDelete<NodeType, EdgeType> = $derived(signals.props.ondelete);
@@ -448,6 +462,26 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
         : (signals.props.colorMode ?? 'light')
     );
 
+    // Viewport batching lifecycle methods
+    initViewportBatching() {
+      if (!this.viewportBatcher) {
+        this.viewportBatcher = new ViewportBatcher((viewport) => {
+          this._viewport = viewport;
+        });
+      }
+    }
+
+    setViewportUpdateSource(isInternal: boolean) {
+      this.isViewportUpdateFromInternal = isInternal;
+    }
+
+    destroyViewportBatching() {
+      if (this.viewportBatcher) {
+        this.viewportBatcher.destroy();
+        this.viewportBatcher = null;
+      }
+    }
+
     constructor() {
       if (process.env.NODE_ENV === 'development') {
         warnIfDeeplyReactive(signals.nodes, 'nodes');
@@ -456,6 +490,9 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
     }
 
     resetStoreValues() {
+      // Flush any pending viewport updates before reset
+      this.viewportBatcher?.flush();
+
       this.dragging = false;
       this.selectionRect = null;
       this.selectionRectMode = null;
