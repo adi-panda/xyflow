@@ -170,55 +170,30 @@ export function getInitialStore(signals) {
                 const { viewport, width, height } = this;
                 const transform = [viewport.x, viewport.y, viewport.zoom];
                 const allVisibleNodes = getVisibleNodes(nodeLookup, transform, width, height, visibilityBuffer);
-                // Use a temporary map for edge visibility calculation - getLayoutedEdges
-                // mutates this map by adding source/target nodes for visible edges
-                const edgeVisibilityNodes = new Map(allVisibleNodes);
+                // Progressive node loading (independent) - only render nodes actually in viewport
+                if (progressiveNodeThreshold > 0 && progressiveNodeBatcher) {
+                    visibleNodes = progressiveNodeBatcher.updateVisibleNodes(allVisibleNodes, _prevRenderedNodes);
+                    this._prevRenderedNodes = new Map(visibleNodes);
+                }
+                else {
+                    visibleNodes = allVisibleNodes;
+                }
+                // Get layouted edges - edges can render even if source/target nodes are off-screen
                 const allVisibleEdges = getLayoutedEdges({
                     ...options,
                     onlyRenderVisible: true,
-                    visibleNodes: edgeVisibilityNodes,
+                    visibleNodes: new Map(visibleNodes),
                     transform,
                     width,
                     height,
                     buffer: visibilityBuffer
                 });
-                // Check if any progressive loading is enabled
-                const useProgressiveEdges = progressiveEdgeThreshold > 0 && progressiveEdgeBatcher;
-                const useProgressiveNodes = progressiveNodeThreshold > 0 && progressiveNodeBatcher;
-                if (useProgressiveEdges || useProgressiveNodes) {
-                    // PARALLEL PROGRESSIVE LOADING SYSTEM
-                    // Both nodes and edges load progressively in tandem.
-                    // Edges only render once both their source and target nodes are rendered.
-                    // Step 1: Progressively load nodes
-                    if (useProgressiveNodes) {
-                        visibleNodes = progressiveNodeBatcher.updateVisibleNodes(edgeVisibilityNodes, _prevRenderedNodes);
-                        this._prevRenderedNodes = new Map(visibleNodes);
-                    }
-                    else {
-                        visibleNodes = edgeVisibilityNodes;
-                    }
-                    // Step 2: Progressively load edges (they'll only render when nodes are ready)
-                    if (useProgressiveEdges) {
-                        // Set the canRender callback so edges wait for their nodes
-                        progressiveEdgeBatcher.canRender = (edge) => {
-                            return visibleNodes.has(edge.source) && visibleNodes.has(edge.target);
-                        };
-                        visibleEdges = progressiveEdgeBatcher.updateVisibleEdges(allVisibleEdges, _prevRenderedEdges);
-                        this._prevRenderedEdges = new Map(visibleEdges);
-                    }
-                    else {
-                        // No edge batching - show all edges whose nodes are visible
-                        visibleEdges = new Map();
-                        for (const [id, edge] of allVisibleEdges) {
-                            if (visibleNodes.has(edge.source) && visibleNodes.has(edge.target)) {
-                                visibleEdges.set(id, edge);
-                            }
-                        }
-                    }
+                // Progressive edge loading (independent)
+                if (progressiveEdgeThreshold > 0 && progressiveEdgeBatcher) {
+                    visibleEdges = progressiveEdgeBatcher.updateVisibleEdges(allVisibleEdges, _prevRenderedEdges);
+                    this._prevRenderedEdges = new Map(visibleEdges);
                 }
                 else {
-                    // No progressive loading - show everything
-                    visibleNodes = edgeVisibilityNodes;
                     visibleEdges = allVisibleEdges;
                 }
             }
@@ -405,6 +380,9 @@ export function getInitialStore(signals) {
         flushProgressiveNodes() {
             this.progressiveNodeBatcher?.flush();
         }
+        flushProgressiveNodesGradually(batchSize) {
+            this.progressiveNodeBatcher?.flushGradually(batchSize);
+        }
         destroyProgressiveNodeBatching() {
             if (this.progressiveNodeBatcher) {
                 this.progressiveNodeBatcher.destroy();
@@ -426,6 +404,9 @@ export function getInitialStore(signals) {
         }
         flushProgressiveEdges() {
             this.progressiveEdgeBatcher?.flush();
+        }
+        flushProgressiveEdgesGradually(batchSize) {
+            this.progressiveEdgeBatcher?.flushGradually(batchSize);
         }
         destroyProgressiveEdgeBatching() {
             if (this.progressiveEdgeBatcher) {

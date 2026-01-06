@@ -4,9 +4,6 @@
  *
  * When the number of newly visible edges exceeds a threshold, edges are added
  * in batches across multiple frames instead of all at once.
- *
- * Edges only render when their source and target nodes are already rendered
- * (checked via canRender callback).
  */
 export class ProgressiveEdgeBatcher {
     pendingEdges = new Map();
@@ -16,8 +13,7 @@ export class ProgressiveEdgeBatcher {
     threshold;
     onUpdate;
     accumulator = 0; // For fractional batch sizes
-    // Callback to check if an edge's nodes are rendered (set externally each frame)
-    canRender = null;
+    isFlushing = false; // Prevents interruption during gradual flush
     constructor(options) {
         this.threshold = options.threshold;
         this.batchSize = options.batchSize;
@@ -33,10 +29,10 @@ export class ProgressiveEdgeBatcher {
             this.renderedEdges = allVisibleEdges;
             return allVisibleEdges;
         }
-        // Find newly visible edges (in allVisible but not in previouslyRendered)
+        // Find newly visible edges (in allVisible but not already rendered or pending)
         const newlyVisible = new Map();
         for (const [id, edge] of allVisibleEdges) {
-            if (!previouslyRenderedEdges.has(id) && !this.renderedEdges.has(id)) {
+            if (!previouslyRenderedEdges.has(id) && !this.renderedEdges.has(id) && !this.pendingEdges.has(id)) {
                 newlyVisible.set(id, edge);
             }
         }
@@ -60,14 +56,27 @@ export class ProgressiveEdgeBatcher {
         }
         // If new edges exceed threshold, queue them for progressive loading
         if (newlyVisible.size > this.threshold) {
+            // Clear any existing pending edges to prevent accumulation
+            // This keeps the batcher focused on the current viewport
+            // BUT don't interrupt if we're in the middle of a gradual flush
+            if (this.pendingEdges.size > 0 && !this.isFlushing) {
+                if (this.rafId !== null) {
+                    cancelAnimationFrame(this.rafId);
+                    this.rafId = null;
+                }
+                this.pendingEdges.clear();
+                this.accumulator = 0;
+            }
             // Add new edges to pending queue
             for (const [id, edge] of newlyVisible) {
                 this.pendingEdges.set(id, edge);
             }
-            // Start progressive loading if not already running
-            this.scheduleNextBatch();
+            // Start progressive loading (only if not already flushing)
+            if (!this.isFlushing) {
+                this.scheduleNextBatch();
+            }
         }
-        else {
+        else if (newlyVisible.size > 0) {
             // Below threshold - add all new edges immediately
             for (const [id, edge] of newlyVisible) {
                 this.renderedEdges.set(id, edge);
@@ -87,16 +96,11 @@ export class ProgressiveEdgeBatcher {
             this.accumulator += this.batchSize;
             const edgesToAdd = Math.floor(this.accumulator);
             this.accumulator -= edgesToAdd;
-            // Add next batch of edges (only those whose nodes are rendered)
+            // Add next batch of edges
             let added = 0;
             for (const [id, edge] of this.pendingEdges) {
                 if (added >= edgesToAdd)
                     break;
-                // Check if this edge's nodes are rendered (if callback provided)
-                if (this.canRender && !this.canRender(edge)) {
-                    // Skip this edge - its nodes aren't ready yet
-                    continue;
-                }
                 this.renderedEdges.set(id, edge);
                 this.pendingEdges.delete(id);
                 added++;
@@ -124,27 +128,57 @@ export class ProgressiveEdgeBatcher {
         return this.pendingEdges.size > 0;
     }
     /**
-     * Flush all pending edges immediately (useful when panning stops).
-     * Only flushes edges whose nodes are rendered (if canRender is set).
+     * Flush all pending edges immediately (can cause lag with many edges).
      */
     flush() {
         if (this.rafId !== null) {
             cancelAnimationFrame(this.rafId);
             this.rafId = null;
         }
-        // Add all pending edges that can be rendered
-        const toRemove = [];
+        // Add all pending edges immediately
         for (const [id, edge] of this.pendingEdges) {
-            // Only add if nodes are ready (or no canRender check)
-            if (!this.canRender || this.canRender(edge)) {
-                this.renderedEdges.set(id, edge);
-                toRemove.push(id);
-            }
+            this.renderedEdges.set(id, edge);
         }
-        for (const id of toRemove) {
-            this.pendingEdges.delete(id);
-        }
+        this.pendingEdges.clear();
         this.onUpdate();
+    }
+    /**
+     * Flush pending edges gradually over multiple frames to avoid lag spikes.
+     * Uses larger batches than normal progressive loading for faster completion.
+     */
+    flushGradually(batchSize = 50) {
+        // Cancel any existing batch operation first
+        if (this.rafId !== null) {
+            cancelAnimationFrame(this.rafId);
+            this.rafId = null;
+        }
+        if (this.pendingEdges.size === 0) {
+            this.isFlushing = false;
+            return;
+        }
+        // Mark that we're in flush mode to prevent updateVisibleEdges from interrupting
+        this.isFlushing = true;
+        this.rafId = requestAnimationFrame(() => {
+            this.rafId = null;
+            let added = 0;
+            for (const [id, edge] of this.pendingEdges) {
+                if (added >= batchSize)
+                    break;
+                this.renderedEdges.set(id, edge);
+                this.pendingEdges.delete(id);
+                added++;
+            }
+            if (added > 0) {
+                this.onUpdate();
+            }
+            // Continue flushing if more pending
+            if (this.pendingEdges.size > 0) {
+                this.flushGradually(batchSize);
+            }
+            else {
+                this.isFlushing = false;
+            }
+        });
     }
     /**
      * Reset the batcher state.
@@ -157,6 +191,7 @@ export class ProgressiveEdgeBatcher {
         this.pendingEdges.clear();
         this.renderedEdges.clear();
         this.accumulator = 0;
+        this.isFlushing = false;
     }
     /**
      * Update configuration.
@@ -179,5 +214,6 @@ export class ProgressiveEdgeBatcher {
         }
         this.pendingEdges.clear();
         this.renderedEdges.clear();
+        this.isFlushing = false;
     }
 }

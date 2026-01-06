@@ -5,9 +5,6 @@ import type { Edge, EdgeLayouted } from '../types';
  *
  * When the number of newly visible edges exceeds a threshold, edges are added
  * in batches across multiple frames instead of all at once.
- *
- * Edges only render when their source and target nodes are already rendered
- * (checked via canRender callback).
  */
 export declare class ProgressiveEdgeBatcher<EdgeType extends Edge = Edge> {
     private pendingEdges;
@@ -17,7 +14,7 @@ export declare class ProgressiveEdgeBatcher<EdgeType extends Edge = Edge> {
     private threshold;
     private onUpdate;
     private accumulator;
-    canRender: ((edge: EdgeLayouted<EdgeType>) => boolean) | null;
+    private isFlushing;
     constructor(options: {
         threshold: number;
         batchSize: number;
@@ -38,10 +35,14 @@ export declare class ProgressiveEdgeBatcher<EdgeType extends Edge = Edge> {
      */
     hasPendingEdges(): boolean;
     /**
-     * Flush all pending edges immediately (useful when panning stops).
-     * Only flushes edges whose nodes are rendered (if canRender is set).
+     * Flush all pending edges immediately (can cause lag with many edges).
      */
     flush(): void;
+    /**
+     * Flush pending edges gradually over multiple frames to avoid lag spikes.
+     * Uses larger batches than normal progressive loading for faster completion.
+     */
+    flushGradually(batchSize?: number): void;
     /**
      * Reset the batcher state.
      */

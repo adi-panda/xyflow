@@ -15,6 +15,7 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
   private threshold: number;
   private onUpdate: () => void;
   private accumulator: number = 0; // For fractional batch sizes
+  private isFlushing: boolean = false; // Prevents interruption during gradual flush
 
   constructor(options: { threshold: number; batchSize: number; onUpdate: () => void }) {
     this.threshold = options.threshold;
@@ -36,10 +37,10 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
       return allVisibleNodes;
     }
 
-    // Find newly visible nodes (in allVisible but not in previouslyRendered)
+    // Find newly visible nodes (in allVisible but not already rendered or pending)
     const newlyVisible: Map<string, InternalNode<NodeType>> = new Map();
     for (const [id, node] of allVisibleNodes) {
-      if (!previouslyRenderedNodes.has(id) && !this.renderedNodes.has(id)) {
+      if (!previouslyRenderedNodes.has(id) && !this.renderedNodes.has(id) && !this.pendingNodes.has(id)) {
         newlyVisible.set(id, node);
       }
     }
@@ -67,13 +68,27 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
 
     // If new nodes exceed threshold, queue them for progressive loading
     if (newlyVisible.size > this.threshold) {
+      // Clear any existing pending nodes to prevent accumulation
+      // This keeps the batcher focused on the current viewport
+      // BUT don't interrupt if we're in the middle of a gradual flush
+      if (this.pendingNodes.size > 0 && !this.isFlushing) {
+        if (this.rafId !== null) {
+          cancelAnimationFrame(this.rafId);
+          this.rafId = null;
+        }
+        this.pendingNodes.clear();
+        this.accumulator = 0;
+      }
+
       // Add new nodes to pending queue
       for (const [id, node] of newlyVisible) {
         this.pendingNodes.set(id, node);
       }
 
-      // Start progressive loading if not already running
-      this.scheduleNextBatch();
+      // Start progressive loading (only if not already flushing)
+      if (!this.isFlushing) {
+        this.scheduleNextBatch();
+      }
     } else if (newlyVisible.size > 0) {
       // Below threshold - add all new nodes immediately
       for (const [id, node] of newlyVisible) {
@@ -136,7 +151,7 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
   }
 
   /**
-   * Flush all pending nodes immediately (useful when panning stops).
+   * Flush all pending nodes immediately (can cause lag with many nodes).
    */
   flush() {
     if (this.rafId !== null) {
@@ -154,6 +169,49 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
   }
 
   /**
+   * Flush pending nodes gradually over multiple frames to avoid lag spikes.
+   * Uses larger batches than normal progressive loading for faster completion.
+   */
+  flushGradually(batchSize: number = 50) {
+    // Cancel any existing batch operation first
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+
+    if (this.pendingNodes.size === 0) {
+      this.isFlushing = false;
+      return;
+    }
+
+    // Mark that we're in flush mode to prevent updateVisibleNodes from interrupting
+    this.isFlushing = true;
+
+    this.rafId = requestAnimationFrame(() => {
+      this.rafId = null;
+
+      let added = 0;
+      for (const [id, node] of this.pendingNodes) {
+        if (added >= batchSize) break;
+        this.renderedNodes.set(id, node);
+        this.pendingNodes.delete(id);
+        added++;
+      }
+
+      if (added > 0) {
+        this.onUpdate();
+      }
+
+      // Continue flushing if more pending
+      if (this.pendingNodes.size > 0) {
+        this.flushGradually(batchSize);
+      } else {
+        this.isFlushing = false;
+      }
+    });
+  }
+
+  /**
    * Reset the batcher state.
    */
   reset() {
@@ -164,6 +222,7 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     this.pendingNodes.clear();
     this.renderedNodes.clear();
     this.accumulator = 0;
+    this.isFlushing = false;
   }
 
   /**
@@ -188,5 +247,6 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     }
     this.pendingNodes.clear();
     this.renderedNodes.clear();
+    this.isFlushing = false;
   }
 }

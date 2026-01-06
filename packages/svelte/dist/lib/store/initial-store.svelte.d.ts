@@ -137,9 +137,11 @@ export declare function getInitialStore<NodeType extends Node = Node, EdgeType e
     destroyViewportBatching(): void;
     initProgressiveNodeBatching(): void;
     flushProgressiveNodes(): void;
+    flushProgressiveNodesGradually(batchSize?: number): void;
     destroyProgressiveNodeBatching(): void;
     initProgressiveEdgeBatching(): void;
     flushProgressiveEdges(): void;
+    flushProgressiveEdgesGradually(batchSize?: number): void;
     destroyProgressiveEdgeBatching(): void;
     resetStoreValues(): void;
 };

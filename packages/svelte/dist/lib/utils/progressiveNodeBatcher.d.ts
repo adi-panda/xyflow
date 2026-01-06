@@ -14,6 +14,7 @@ export declare class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     private threshold;
     private onUpdate;
     private accumulator;
+    private isFlushing;
     constructor(options: {
         threshold: number;
         batchSize: number;
@@ -34,9 +35,14 @@ export declare class ProgressiveNodeBatcher<NodeType extends Node = Node> {
      */
     hasPendingNodes(): boolean;
     /**
-     * Flush all pending nodes immediately (useful when panning stops).
+     * Flush all pending nodes immediately (can cause lag with many nodes).
      */
     flush(): void;
+    /**
+     * Flush pending nodes gradually over multiple frames to avoid lag spikes.
+     * Uses larger batches than normal progressive loading for faster completion.
+     */
+    flushGradually(batchSize?: number): void;
     /**
      * Reset the batcher state.
      */

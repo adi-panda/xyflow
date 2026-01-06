@@ -73,14 +73,17 @@
     setPanZoomInstance: (instance: PanZoomInstance) => {
       store.panZoom = instance;
     },
-    onPanZoomStart: onmovestart,
+    onPanZoomStart: (event, viewport) => {
+      // Cancel any pending flush if user starts panning again
+      onmovestart?.(event, viewport);
+    },
     onPanZoom: onmove,
     onPanZoomEnd: (event, viewport) => {
       // Flush pending updates for pixel-perfect final positioning
       store.viewportBatcher?.flush();
-      // Flush any remaining progressive nodes/edges so they render immediately when panning stops
-      store.flushProgressiveNodes();
-      store.flushProgressiveEdges();
+      // Gradually flush any remaining progressive nodes/edges when panning stops
+      store.flushProgressiveNodesGradually(30);
+      store.flushProgressiveEdgesGradually(30);
       onmoveend?.(event, viewport);
     },
     zoomOnScroll,
