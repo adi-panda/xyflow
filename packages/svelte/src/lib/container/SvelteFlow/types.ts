@@ -356,7 +356,13 @@ export type SvelteFlowProps<
     /**
      * When enabled, batches viewport updates using requestAnimationFrame during panning to reduce DOM thrashing.
      * This improves performance when onlyRenderVisibleElements is true by coalescing rapid viewport changes.
-     * Adds ~16ms latency (one frame) during panning but significantly reduces visibility recalculations.
+     *
+     * Features:
+     * - RAF batching: Updates aligned with browser paint cycle
+     * - Adaptive throttling: Automatically slows updates to ~1fps during rapid panning (>10000 pixels/sec)
+     * - Returns to normal throttle when panning slows down
+     *
+     * During rapid panning, you'll see updates every ~1 second instead of lag spikes from expensive visibility calculations.
      * @default true
      */
     batchViewportUpdates?: boolean;
@@ -369,6 +375,38 @@ export type SvelteFlowProps<
      * @default 0
      */
     viewportUpdateThrottle?: number;
+    /**
+     * When more than this many NEW nodes become visible at once, progressive loading kicks in
+     * to prevent lag spikes. Nodes are then added in batches of `progressiveNodeBatchSize` per frame.
+     * - 0 = disable progressive loading entirely
+     * - 20-30 = good default for complex workflows
+     * Only applies when onlyRenderVisibleElements is true.
+     * @default 0
+     */
+    progressiveNodeThreshold?: number;
+    /**
+     * Number of nodes to render per frame when progressive loading is active.
+     * Lower values = smoother but slower to fully render. Higher values = faster but choppier.
+     * Only used when newly visible nodes exceed `progressiveNodeThreshold`.
+     * @default 15
+     */
+    progressiveNodeBatchSize?: number;
+    /**
+     * When more than this many NEW edges become visible at once, progressive loading kicks in
+     * to prevent lag spikes. Edges are then added in batches of `progressiveEdgeBatchSize` per frame.
+     * - 0 = disable progressive edge loading entirely
+     * - 30-50 = good default for complex workflows with many edges
+     * Only applies when onlyRenderVisibleElements is true.
+     * @default 0
+     */
+    progressiveEdgeThreshold?: number;
+    /**
+     * Number of edges to render per frame when progressive loading is active.
+     * Lower values = smoother but slower to fully render. Higher values = faster but choppier.
+     * Only used when newly visible edges exceed `progressiveEdgeThreshold`.
+     * @default 20
+     */
+    progressiveEdgeBatchSize?: number;
     /**
      * You can enable this prop to automatically pan the viewport while making a new connection.
      * @default true

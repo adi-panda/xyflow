@@ -37,15 +37,25 @@
       if (store.batchViewportUpdates) {
         store.initViewportBatching();
       }
+      // Initialize progressive node loading if enabled
+      if (store.progressiveNodeThreshold > 0) {
+        store.initProgressiveNodeBatching();
+      }
+      // Initialize progressive edge loading if enabled
+      if (store.progressiveEdgeThreshold > 0) {
+        store.initProgressiveEdgeBatching();
+      }
       oninit?.();
       onInitCalled = true;
     }
   });
 
-  // Cleanup effect to destroy batcher on unmount
+  // Cleanup effect to destroy batchers on unmount
   $effect(() => {
     return () => {
       store.destroyViewportBatching();
+      store.destroyProgressiveNodeBatching();
+      store.destroyProgressiveEdgeBatching();
     };
   });
 </script>
@@ -66,8 +76,11 @@
     onPanZoomStart: onmovestart,
     onPanZoom: onmove,
     onPanZoomEnd: (event, viewport) => {
-      // Flush pending viewport updates for pixel-perfect final positioning
+      // Flush pending updates for pixel-perfect final positioning
       store.viewportBatcher?.flush();
+      // Flush any remaining progressive nodes/edges so they render immediately when panning stops
+      store.flushProgressiveNodes();
+      store.flushProgressiveEdges();
       onmoveend?.(event, viewport);
     },
     zoomOnScroll,

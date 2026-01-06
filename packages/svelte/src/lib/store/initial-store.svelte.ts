@@ -73,6 +73,8 @@ import type { StoreSignals } from './types';
 import { MediaQuery } from 'svelte/reactivity';
 import { getLayoutedEdges, getVisibleNodes, type EdgeLayoutAllOptions } from './visibleElements';
 import { ViewportBatcher } from '$lib/utils/viewportBatcher';
+import { ProgressiveNodeBatcher } from '$lib/utils/progressiveNodeBatcher';
+import { ProgressiveEdgeBatcher } from '$lib/utils/progressiveEdgeBatcher';
 
 export const initialNodeTypes = {
   input: InputNode,
@@ -123,6 +125,15 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
     // RAF batching for viewport updates during panning (internal use only)
     viewportBatcher: ViewportBatcher | null = null;
     isViewportUpdateFromInternal = false;
+
+    // Progressive node loading to prevent lag spikes
+    progressiveNodeBatcher: ProgressiveNodeBatcher<NodeType> | null = null;
+    _progressiveTrigger = $state.raw(0); // Incremented to force re-derivation
+    _prevRenderedNodes: Map<string, InternalNode<NodeType>> = new Map();
+
+    // Progressive edge loading to prevent lag spikes
+    progressiveEdgeBatcher: ProgressiveEdgeBatcher<EdgeType> | null = null;
+    _prevRenderedEdges: Map<string, EdgeLayouted<EdgeType>> = new Map();
 
     nodesInitialized: boolean = $derived.by(() => {
       const nodesInitialized = adoptUserNodes(signals.nodes, this.nodeLookup, this.parentLookup, {
@@ -225,7 +236,8 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
     _prevVisibleEdges = new Map<string, EdgeLayouted<EdgeType>>();
     visible = $derived.by(() => {
       const {
-        // We need to access this._nodes to trigger on changes
+        // Access nodes getter to trigger on node changes (add/delete/move)
+        // The getter internally accesses nodesInitialized which populates nodeLookup
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         nodes,
         _edges: edges,
@@ -236,7 +248,16 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
         onlyRenderVisibleElements,
         visibilityBuffer,
         defaultEdgeOptions,
-        zIndexMode
+        zIndexMode,
+        progressiveNodeThreshold,
+        progressiveNodeBatcher,
+        _prevRenderedNodes,
+        progressiveEdgeThreshold,
+        progressiveEdgeBatcher,
+        _prevRenderedEdges,
+        // Access trigger to force re-derivation when batcher updates
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        _progressiveTrigger
       } = this;
 
       let visibleNodes: Map<string, InternalNode<NodeType>>;
@@ -258,16 +279,74 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
         const { viewport, width, height } = this;
         const transform: Transform = [viewport.x, viewport.y, viewport.zoom];
 
-        visibleNodes = getVisibleNodes(nodeLookup, transform, width, height, visibilityBuffer);
-        visibleEdges = getLayoutedEdges({
+        const allVisibleNodes = getVisibleNodes(
+          nodeLookup,
+          transform,
+          width,
+          height,
+          visibilityBuffer
+        );
+
+        // Use a temporary map for edge visibility calculation - getLayoutedEdges
+        // mutates this map by adding source/target nodes for visible edges
+        const edgeVisibilityNodes = new Map(allVisibleNodes);
+
+        const allVisibleEdges = getLayoutedEdges({
           ...options,
           onlyRenderVisible: true,
-          visibleNodes,
+          visibleNodes: edgeVisibilityNodes,
           transform,
           width,
           height,
           buffer: visibilityBuffer
         });
+
+        // Check if any progressive loading is enabled
+        const useProgressiveEdges = progressiveEdgeThreshold > 0 && progressiveEdgeBatcher;
+        const useProgressiveNodes = progressiveNodeThreshold > 0 && progressiveNodeBatcher;
+
+        if (useProgressiveEdges || useProgressiveNodes) {
+          // PARALLEL PROGRESSIVE LOADING SYSTEM
+          // Both nodes and edges load progressively in tandem.
+          // Edges only render once both their source and target nodes are rendered.
+
+          // Step 1: Progressively load nodes
+          if (useProgressiveNodes) {
+            visibleNodes = progressiveNodeBatcher.updateVisibleNodes(
+              edgeVisibilityNodes,
+              _prevRenderedNodes
+            );
+            this._prevRenderedNodes = new Map(visibleNodes);
+          } else {
+            visibleNodes = edgeVisibilityNodes;
+          }
+
+          // Step 2: Progressively load edges (they'll only render when nodes are ready)
+          if (useProgressiveEdges) {
+            // Set the canRender callback so edges wait for their nodes
+            progressiveEdgeBatcher.canRender = (edge) => {
+              return visibleNodes.has(edge.source) && visibleNodes.has(edge.target);
+            };
+
+            visibleEdges = progressiveEdgeBatcher.updateVisibleEdges(
+              allVisibleEdges,
+              _prevRenderedEdges
+            );
+            this._prevRenderedEdges = new Map(visibleEdges);
+          } else {
+            // No edge batching - show all edges whose nodes are visible
+            visibleEdges = new Map<string, EdgeLayouted<EdgeType>>();
+            for (const [id, edge] of allVisibleEdges) {
+              if (visibleNodes.has(edge.source) && visibleNodes.has(edge.target)) {
+                visibleEdges.set(id, edge);
+              }
+            }
+          }
+        } else {
+          // No progressive loading - show everything
+          visibleNodes = edgeVisibilityNodes;
+          visibleEdges = allVisibleEdges;
+        }
       } else {
         visibleNodes = this.nodeLookup;
         visibleEdges = getLayoutedEdges(options as EdgeLayoutAllOptions<NodeType, EdgeType>);
@@ -403,6 +482,10 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
     visibilityBuffer: number = $derived(signals.props.visibilityBuffer ?? 0.1);
     batchViewportUpdates: boolean = $derived(signals.props.batchViewportUpdates ?? true);
     viewportUpdateThrottle: number = $derived(signals.props.viewportUpdateThrottle ?? 0);
+    progressiveNodeThreshold: number = $derived(signals.props.progressiveNodeThreshold ?? 0);
+    progressiveNodeBatchSize: number = $derived(signals.props.progressiveNodeBatchSize ?? 15);
+    progressiveEdgeThreshold: number = $derived(signals.props.progressiveEdgeThreshold ?? 0);
+    progressiveEdgeBatchSize: number = $derived(signals.props.progressiveEdgeBatchSize ?? 20);
     onerror: OnError = $derived(signals.props.onflowerror ?? devWarn);
 
     ondelete?: OnDelete<NodeType, EdgeType> = $derived(signals.props.ondelete);
@@ -473,7 +556,7 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
           (viewport) => {
             this._viewport = viewport;
           },
-          this.viewportUpdateThrottle
+          this.viewportUpdateThrottle // Normal throttle (e.g., 0-33ms)
         );
       }
     }
@@ -489,6 +572,56 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
       }
     }
 
+    // Progressive node loading lifecycle methods
+    initProgressiveNodeBatching() {
+      if (!this.progressiveNodeBatcher && this.progressiveNodeThreshold > 0) {
+        this.progressiveNodeBatcher = new ProgressiveNodeBatcher<NodeType>({
+          threshold: this.progressiveNodeThreshold,
+          batchSize: this.progressiveNodeBatchSize,
+          onUpdate: () => {
+            // Increment trigger to force re-derivation of visible nodes
+            this._progressiveTrigger++;
+          }
+        });
+      }
+    }
+
+    flushProgressiveNodes() {
+      this.progressiveNodeBatcher?.flush();
+    }
+
+    destroyProgressiveNodeBatching() {
+      if (this.progressiveNodeBatcher) {
+        this.progressiveNodeBatcher.destroy();
+        this.progressiveNodeBatcher = null;
+      }
+    }
+
+    // Progressive edge loading lifecycle methods
+    initProgressiveEdgeBatching() {
+      if (!this.progressiveEdgeBatcher && this.progressiveEdgeThreshold > 0) {
+        this.progressiveEdgeBatcher = new ProgressiveEdgeBatcher<EdgeType>({
+          threshold: this.progressiveEdgeThreshold,
+          batchSize: this.progressiveEdgeBatchSize,
+          onUpdate: () => {
+            // Increment trigger to force re-derivation of visible edges
+            this._progressiveTrigger++;
+          }
+        });
+      }
+    }
+
+    flushProgressiveEdges() {
+      this.progressiveEdgeBatcher?.flush();
+    }
+
+    destroyProgressiveEdgeBatching() {
+      if (this.progressiveEdgeBatcher) {
+        this.progressiveEdgeBatcher.destroy();
+        this.progressiveEdgeBatcher = null;
+      }
+    }
+
     constructor() {
       if (process.env.NODE_ENV === 'development') {
         warnIfDeeplyReactive(signals.nodes, 'nodes');
@@ -497,8 +630,10 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
     }
 
     resetStoreValues() {
-      // Flush any pending viewport updates before reset
+      // Flush any pending updates before reset
       this.viewportBatcher?.flush();
+      this.progressiveNodeBatcher?.reset();
+      this.progressiveEdgeBatcher?.reset();
 
       this.dragging = false;
       this.selectionRect = null;
