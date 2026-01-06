@@ -1,0 +1,21 @@
+import type { ClassValue } from 'svelte/elements';
+import type { Component } from 'svelte';
+import type { MiniMapNodeProps } from './types';
+type $$ComponentProps = {
+    id: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    borderRadius?: number;
+    color?: string;
+    shapeRendering: string;
+    strokeColor?: string;
+    strokeWidth?: number;
+    selected?: boolean;
+    class?: ClassValue;
+    nodeComponent?: Component<MiniMapNodeProps>;
+};
+declare const MinimapNode: Component<$$ComponentProps, {}, "">;
+type MinimapNode = ReturnType<typeof MinimapNode>;
+export default MinimapNode;
