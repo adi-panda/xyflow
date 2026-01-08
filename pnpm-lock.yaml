@@ -47,6 +47,9 @@ importers:
 
   examples/astro-xyflow:
     dependencies:
+      '@adipanda/xyflow-svelte':
+        specifier: workspace:^
+        version: link:../../packages/svelte
       '@astrojs/react':
         specifier: ^4.3.0
         version: 4.3.0(@types/node@20.14.6)(@types/react-dom@18.2.8)(@types/react@18.2.24)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)(terser@5.31.0)
@@ -62,9 +65,6 @@ importers:
       '@xyflow/react':
         specifier: workspace:^
         version: link:../../packages/react
-      '@xyflow/svelte':
-        specifier: workspace:^
-        version: link:../../packages/svelte
       astro:
         specifier: ^5.13.5
         version: 5.13.5(@types/node@20.14.6)(rollup@4.52.5)(terser@5.31.0)(typescript@5.9.3)
@@ -153,15 +153,15 @@ importers:
 
   examples/svelte:
     dependencies:
+      '@adipanda/xyflow-svelte':
+        specifier: workspace:^
+        version: link:../../packages/svelte
       '@dagrejs/dagre':
         specifier: ^1.1.8
         version: 1.1.8
       '@sveltejs/vite-plugin-svelte':
         specifier: ^6.2.1
         version: 6.2.1(svelte@5.45.4)(vite@7.2.6(terser@5.31.0))
-      '@xyflow/svelte':
-        specifier: workspace:^
-        version: link:../../packages/svelte
     devDependencies:
       '@sveltejs/adapter-auto':
         specifier: ^7.0.0
@@ -276,8 +276,8 @@ importers:
         specifier: ^4.1.0
         version: 4.1.0(svelte@5.45.4)
       '@xyflow/system':
-        specifier: workspace:*
-        version: link:../system
+        specifier: ^0.0.74
+        version: 0.0.74
     devDependencies:
       '@eslint/compat':
         specifier: ^2.0.0
@@ -2364,6 +2364,9 @@ packages:
     engines: {node: ^14.18.0 || >=16.0.0}
     peerDependencies:
       vite: ^4.2.0 || ^5.0.0 || ^6.0.0 || ^7.0.0-beta.0
+
+  '@xyflow/system@0.0.74':
+    resolution: {integrity: sha512-7v7B/PkiVrkdZzSbL+inGAo6tkR/WQHHG0/jhSvLQToCsfa8YubOGmBYd1s08tpKpihdHDZFwzQZeR69QSBb4Q==}
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -8885,6 +8888,18 @@ snapshots:
       vite: 6.3.5(@types/node@20.14.6)(terser@5.31.0)
     transitivePeerDependencies:
       - supports-color
+
+  '@xyflow/system@0.0.74':
+    dependencies:
+      '@types/d3-drag': 3.0.7
+      '@types/d3-interpolate': 3.0.4
+      '@types/d3-selection': 3.0.10
+      '@types/d3-transition': 3.0.8
+      '@types/d3-zoom': 3.0.8
+      d3-drag: 3.0.0
+      d3-interpolate: 3.0.1
+      d3-selection: 3.0.0
+      d3-zoom: 3.0.0
 
   acorn-jsx@5.3.2(acorn@8.15.0):
     dependencies:

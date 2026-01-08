@@ -1,0 +1,129 @@
+/**
+ * A wrapper around ResizeObserver that staggers observe() calls across
+ * multiple animation frames to prevent lag spikes when many nodes mount at once.
+ *
+ * Instead of calling resizeObserver.observe() for 50 nodes in a single frame,
+ * this queues them and processes a small batch each frame.
+ */
+export class StaggeredResizeObserver {
+    observer;
+    pendingObserveList = [];
+    pendingObserveSet = new Set(); // For O(1) lookups
+    pendingUnobserve = new Set();
+    rafId = null;
+    batchSize;
+    constructor(callback, batchSize = 5) {
+        this.observer = new ResizeObserver(callback);
+        this.batchSize = batchSize;
+    }
+    /**
+     * Queue an element to be observed. The actual observe() call will be
+     * staggered across frames to prevent layout thrashing.
+     */
+    observe(element) {
+        // If it was pending unobserve, just cancel that
+        if (this.pendingUnobserve.has(element)) {
+            this.pendingUnobserve.delete(element);
+            return;
+        }
+        // Avoid duplicates - O(1) with Set
+        if (!this.pendingObserveSet.has(element)) {
+            this.pendingObserveList.push(element);
+            this.pendingObserveSet.add(element);
+            this.scheduleProcessing();
+        }
+    }
+    /**
+     * Unobserve an element immediately (unobserve is cheap).
+     * Also removes from pending queue if not yet observed.
+     */
+    unobserve(element) {
+        // Remove from pending queue if it's there - O(1) check with Set
+        if (this.pendingObserveSet.has(element)) {
+            this.pendingObserveSet.delete(element);
+            // Note: element stays in list but will be skipped in processBatch
+            return;
+        }
+        // Mark for unobserve (will be processed in next batch to avoid
+        // unobserving something we haven't observed yet)
+        this.pendingUnobserve.add(element);
+        this.scheduleProcessing();
+    }
+    /**
+     * Immediately observe all pending elements (use sparingly).
+     */
+    flush() {
+        if (this.rafId !== null) {
+            cancelAnimationFrame(this.rafId);
+            this.rafId = null;
+        }
+        // Process all unobserves first
+        for (const element of this.pendingUnobserve) {
+            this.observer.unobserve(element);
+        }
+        this.pendingUnobserve.clear();
+        // Then observe all pending (only elements still in Set)
+        for (const element of this.pendingObserveList) {
+            if (this.pendingObserveSet.has(element)) {
+                this.observer.observe(element);
+            }
+        }
+        this.pendingObserveList = [];
+        this.pendingObserveSet.clear();
+    }
+    /**
+     * Disconnect the underlying ResizeObserver and clear all pending operations.
+     */
+    disconnect() {
+        if (this.rafId !== null) {
+            cancelAnimationFrame(this.rafId);
+            this.rafId = null;
+        }
+        this.pendingObserveList = [];
+        this.pendingObserveSet.clear();
+        this.pendingUnobserve.clear();
+        this.observer.disconnect();
+    }
+    scheduleProcessing() {
+        if (this.rafId !== null)
+            return;
+        this.rafId = requestAnimationFrame(() => {
+            this.rafId = null;
+            this.processBatch();
+        });
+    }
+    processBatch() {
+        // Process unobserves first (they're cheap and prevent wasted work)
+        for (const element of this.pendingUnobserve) {
+            this.observer.unobserve(element);
+        }
+        this.pendingUnobserve.clear();
+        // Process a batch of observes, skipping any that were unobserved
+        let processed = 0;
+        while (this.pendingObserveList.length > 0 && processed < this.batchSize) {
+            const element = this.pendingObserveList.shift();
+            // Only observe if still in Set (wasn't unobserved)
+            if (this.pendingObserveSet.has(element)) {
+                this.pendingObserveSet.delete(element);
+                this.observer.observe(element);
+                processed++;
+            }
+        }
+        // Schedule next batch if there's more
+        if (this.pendingObserveSet.size > 0) {
+            this.scheduleProcessing();
+        }
+    }
+    /**
+     * Update the batch size for processing.
+     */
+    setBatchSize(size) {
+        this.batchSize = size;
+    }
+    /**
+     * Check if there are pending observations.
+     */
+    hasPending() {
+        return this.pendingObserveSet.size > 0 || this.pendingUnobserve.size > 0;
+    }
+}

@@ -26,6 +26,10 @@ export declare function getInitialStore<NodeType extends Node = Node, EdgeType e
     zIndexMode: ZIndexMode;
     viewportBatcher: ViewportBatcher | null;
     isViewportUpdateFromInternal: boolean;
+    _prevViewportForPan: {
+        x: number;
+        y: number;
+    } | null;
     progressiveNodeBatcher: ProgressiveNodeBatcher<NodeType> | null;
     _progressiveTrigger: number;
     _prevRenderedNodes: Map<string, InternalNode<NodeType>>;

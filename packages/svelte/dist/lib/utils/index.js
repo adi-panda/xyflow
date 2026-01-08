@@ -27,3 +27,4 @@ export const arrowKeyDiffs = {
 export { ViewportBatcher } from './viewportBatcher';
 export { ProgressiveNodeBatcher } from './progressiveNodeBatcher';
 export { ProgressiveEdgeBatcher } from './progressiveEdgeBatcher';
+export { StaggeredResizeObserver } from './staggeredResizeObserver';

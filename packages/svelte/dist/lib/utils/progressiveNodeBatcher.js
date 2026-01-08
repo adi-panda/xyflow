@@ -4,20 +4,38 @@
  *
  * When the number of newly visible nodes exceeds a threshold, nodes are added
  * in batches across multiple frames instead of all at once.
+ *
+ * Nodes are sorted by their position relative to the pan direction, so nodes
+ * entering the viewport from the direction you're panning appear first.
  */
 export class ProgressiveNodeBatcher {
     pendingNodes = new Map();
     renderedNodes = new Map();
-    rafId = null;
     batchSize;
     threshold;
-    onUpdate;
-    accumulator = 0; // For fractional batch sizes
-    isFlushing = false; // Prevents interruption during gradual flush
+    debug = false; // Enable debug logging
+    panDirection = { x: 0, y: 0 }; // Current pan direction (viewport delta)
+    // RAF and batching state
+    rafId = null;
+    accumulator = 0;
+    isFlushing = false;
+    // Callback for when rendered nodes change
+    onUpdate = null;
+    // Cache to avoid creating new Maps when nothing changed
+    cachedReturnMap = null;
+    lastRenderedSize = 0;
+    dirty = true;
     constructor(options) {
         this.threshold = options.threshold;
         this.batchSize = options.batchSize;
-        this.onUpdate = options.onUpdate;
+        this.onUpdate = options.onUpdate ?? null;
+    }
+    /**
+     * Update the pan direction. This affects how pending nodes are sorted.
+     * @param direction The viewport delta (positive x = panning left, negative x = panning right)
+     */
+    setPanDirection(direction) {
+        this.panDirection = direction;
     }
     /**
      * Update the visible nodes. Returns the nodes that should actually be rendered.
@@ -29,10 +47,13 @@ export class ProgressiveNodeBatcher {
             this.renderedNodes = allVisibleNodes;
             return allVisibleNodes;
         }
+        let hasChanges = false;
         // Find newly visible nodes (in allVisible but not already rendered or pending)
         const newlyVisible = new Map();
         for (const [id, node] of allVisibleNodes) {
-            if (!previouslyRenderedNodes.has(id) && !this.renderedNodes.has(id) && !this.pendingNodes.has(id)) {
+            if (!previouslyRenderedNodes.has(id) &&
+                !this.renderedNodes.has(id) &&
+                !this.pendingNodes.has(id)) {
                 newlyVisible.set(id, node);
             }
         }
@@ -40,6 +61,7 @@ export class ProgressiveNodeBatcher {
         for (const id of this.renderedNodes.keys()) {
             if (!allVisibleNodes.has(id)) {
                 this.renderedNodes.delete(id);
+                hasChanges = true;
             }
         }
         // Also remove from pending if no longer visible
@@ -48,14 +70,22 @@ export class ProgressiveNodeBatcher {
                 this.pendingNodes.delete(id);
             }
         }
-        // Update existing rendered nodes with fresh data
+        // Update existing rendered nodes with fresh data (references may have changed)
         for (const [id, node] of allVisibleNodes) {
             if (this.renderedNodes.has(id)) {
-                this.renderedNodes.set(id, node);
+                const existing = this.renderedNodes.get(id);
+                // Only update if the node reference actually changed
+                if (existing !== node) {
+                    this.renderedNodes.set(id, node);
+                    hasChanges = true;
+                }
             }
         }
         // If new nodes exceed threshold, queue them for progressive loading
         if (newlyVisible.size > this.threshold) {
+            if (this.debug) {
+                console.log(`[NodeBatcher] PROGRESSIVE: ${newlyVisible.size} new nodes > threshold ${this.threshold}, queueing`);
+            }
             // Clear any existing pending nodes to prevent accumulation
             // This keeps the batcher focused on the current viewport
             // BUT don't interrupt if we're in the middle of a gradual flush
@@ -78,12 +108,21 @@ export class ProgressiveNodeBatcher {
         }
         else if (newlyVisible.size > 0) {
             // Below threshold - add all new nodes immediately
+            if (this.debug) {
+                console.log(`[NodeBatcher] IMMEDIATE: ${newlyVisible.size} new nodes <= threshold ${this.threshold}, adding all at once`);
+            }
             for (const [id, node] of newlyVisible) {
                 this.renderedNodes.set(id, node);
             }
+            hasChanges = true;
         }
-        // Return a new Map so Svelte detects the change
-        return new Map(this.renderedNodes);
+        // Only create a new Map if something actually changed
+        if (hasChanges || this.dirty || this.cachedReturnMap === null) {
+            this.cachedReturnMap = new Map(this.renderedNodes);
+            this.lastRenderedSize = this.renderedNodes.size;
+            this.dirty = false;
+        }
+        return this.cachedReturnMap;
     }
     scheduleNextBatch() {
         if (this.rafId !== null || this.pendingNodes.size === 0) {
@@ -105,9 +144,13 @@ export class ProgressiveNodeBatcher {
                 this.pendingNodes.delete(id);
                 added++;
             }
+            if (this.debug) {
+                console.log(`[NodeBatcher] BATCH: added ${added} nodes, ${this.pendingNodes.size} still pending`);
+            }
             // Notify that rendered nodes changed
             if (added > 0) {
-                this.onUpdate();
+                this.dirty = true; // Mark dirty so next updateVisibleNodes creates new Map
+                this.onUpdate?.();
             }
             // Schedule next batch if more pending
             if (this.pendingNodes.size > 0) {
@@ -135,12 +178,16 @@ export class ProgressiveNodeBatcher {
             cancelAnimationFrame(this.rafId);
             this.rafId = null;
         }
+        if (this.pendingNodes.size === 0) {
+            return;
+        }
         // Add all pending nodes immediately
         for (const [id, node] of this.pendingNodes) {
             this.renderedNodes.set(id, node);
         }
         this.pendingNodes.clear();
-        this.onUpdate();
+        this.dirty = true;
+        this.onUpdate?.();
     }
     /**
      * Flush pending nodes gradually over multiple frames to avoid lag spikes.
@@ -169,7 +216,8 @@ export class ProgressiveNodeBatcher {
                 added++;
             }
             if (added > 0) {
-                this.onUpdate();
+                this.dirty = true;
+                this.onUpdate?.();
             }
             // Continue flushing if more pending
             if (this.pendingNodes.size > 0) {
@@ -190,6 +238,9 @@ export class ProgressiveNodeBatcher {
         }
         this.pendingNodes.clear();
         this.renderedNodes.clear();
+        this.cachedReturnMap = null;
+        this.lastRenderedSize = 0;
+        this.dirty = true;
         this.accumulator = 0;
         this.isFlushing = false;
     }
@@ -214,6 +265,9 @@ export class ProgressiveNodeBatcher {
         }
         this.pendingNodes.clear();
         this.renderedNodes.clear();
+        this.cachedReturnMap = null;
+        this.lastRenderedSize = 0;
+        this.dirty = true;
         this.isFlushing = false;
     }
 }

@@ -27,6 +27,9 @@
   let panOnDragActive = $derived(store.panActivationKeyPressed || panOnDrag);
   let panOnScrollActive = $derived(store.panActivationKeyPressed || panOnScroll);
 
+  // Track pending flush timeout so we can cancel if user starts panning again
+  let flushTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
   // We extract the initial value by destructuring
   const { viewport: initialViewport } = store;
 
@@ -53,6 +56,9 @@
   // Cleanup effect to destroy batchers on unmount
   $effect(() => {
     return () => {
+      if (flushTimeoutId) {
+        clearTimeout(flushTimeoutId);
+      }
       store.destroyViewportBatching();
       store.destroyProgressiveNodeBatching();
       store.destroyProgressiveEdgeBatching();
@@ -75,6 +81,10 @@
     },
     onPanZoomStart: (event, viewport) => {
       // Cancel any pending flush if user starts panning again
+      if (flushTimeoutId) {
+        clearTimeout(flushTimeoutId);
+        flushTimeoutId = null;
+      }
       onmovestart?.(event, viewport);
     },
     onPanZoom: onmove,
@@ -82,8 +92,11 @@
       // Flush pending updates for pixel-perfect final positioning
       store.viewportBatcher?.flush();
       // Gradually flush any remaining progressive nodes/edges when panning stops
-      store.flushProgressiveNodesGradually(30);
-      store.flushProgressiveEdgesGradually(30);
+      flushTimeoutId = setTimeout(() => {
+        store.flushProgressiveNodesGradually(10);
+        store.flushProgressiveEdgesGradually(10);
+        flushTimeoutId = null;
+      }, 300);
       onmoveend?.(event, viewport);
     },
     zoomOnScroll,

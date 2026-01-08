@@ -102,14 +102,14 @@ export function getLayoutedEdges<NodeType extends Node = Node, EdgeType extends 
     }
 
     if (onlyRenderVisible) {
-      const { visibleNodes, transform, width, height, buffer } = options;
+      const { transform, width, height, buffer } = options;
 
       // Apply buffer margin to viewport for edge visibility checks
       const bufferX = width! * buffer;
       const bufferY = height! * buffer;
 
       if (
-        isEdgeVisible({
+        !isEdgeVisible({
           sourceNode,
           targetNode,
           width: width! + bufferX * 2,
@@ -117,9 +117,6 @@ export function getLayoutedEdges<NodeType extends Node = Node, EdgeType extends 
           transform: transform!
         })
       ) {
-        visibleNodes!.set(sourceNode.id, sourceNode);
-        visibleNodes!.set(targetNode.id, targetNode);
-      } else {
         continue;
       }
     }

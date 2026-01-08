@@ -1,25 +1,42 @@
 import type { InternalNode, Node } from '../types';
+export type PanDirection = {
+    x: number;
+    y: number;
+};
 /**
  * Manages progressive loading of nodes to prevent lag spikes when many nodes
  * become visible at once during rapid panning.
  *
  * When the number of newly visible nodes exceeds a threshold, nodes are added
  * in batches across multiple frames instead of all at once.
+ *
+ * Nodes are sorted by their position relative to the pan direction, so nodes
+ * entering the viewport from the direction you're panning appear first.
  */
 export declare class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     private pendingNodes;
     private renderedNodes;
-    private rafId;
     private batchSize;
     private threshold;
-    private onUpdate;
+    private debug;
+    private panDirection;
+    private rafId;
     private accumulator;
     private isFlushing;
+    private onUpdate;
+    private cachedReturnMap;
+    private lastRenderedSize;
+    private dirty;
     constructor(options: {
         threshold: number;
         batchSize: number;
-        onUpdate: () => void;
+        onUpdate?: () => void;
     });
+    /**
+     * Update the pan direction. This affects how pending nodes are sorted.
+     * @param direction The viewport delta (positive x = panning left, negative x = panning right)
+     */
+    setPanDirection(direction: PanDirection): void;
     /**
      * Update the visible nodes. Returns the nodes that should actually be rendered.
      * If there are too many new nodes, they'll be queued and added progressively.

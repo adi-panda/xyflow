@@ -126,6 +126,9 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
     viewportBatcher: ViewportBatcher | null = null;
     isViewportUpdateFromInternal = false;
 
+    // Pan direction tracking for progressive loading
+    _prevViewportForPan: { x: number; y: number } | null = null;
+
     // Progressive node loading to prevent lag spikes
     progressiveNodeBatcher: ProgressiveNodeBatcher<NodeType> | null = null;
     _progressiveTrigger = $state.raw(0); // Incremented to force re-derivation
@@ -234,6 +237,7 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
     edgeLookup: EdgeLookup<EdgeType> = new Map();
 
     _prevVisibleEdges = new Map<string, EdgeLayouted<EdgeType>>();
+
     visible = $derived.by(() => {
       const {
         // Access nodes getter to trigger on node changes (add/delete/move)
@@ -279,21 +283,37 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
         const { viewport, width, height } = this;
         const transform: Transform = [viewport.x, viewport.y, viewport.zoom];
 
+        // Scale buffer with zoom to maintain consistent world-space lookahead.
+        // When zoomed in, screen-space buffer covers less world-space, so we increase it.
+        // This reduces mount/unmount churn during panning at high zoom levels.
+        // Clamp to reasonable bounds (max 0.5 = 50% of viewport as buffer)
+        const zoomScaledBuffer = Math.min(visibilityBuffer * Math.max(1, viewport.zoom), 0.5);
+
         const allVisibleNodes = getVisibleNodes(
           nodeLookup,
           transform,
           width,
           height,
-          visibilityBuffer
+          zoomScaledBuffer
         );
 
         // Progressive node loading (independent) - only render nodes actually in viewport
         if (progressiveNodeThreshold > 0 && progressiveNodeBatcher) {
+          // Scale batch size inversely with zoom - when zoomed in, nodes are more
+          // expensive (more DOM elements), so use smaller batches to avoid frame drops.
+          // At zoom=1, use configured batch size. At zoom=2, use half. Min 1.
+          const scaledBatchSize = Math.max(
+            1,
+            Math.round(this.progressiveNodeBatchSize / Math.max(1, viewport.zoom))
+          );
+          progressiveNodeBatcher.updateConfig({ batchSize: scaledBatchSize });
+
           visibleNodes = progressiveNodeBatcher.updateVisibleNodes(
             allVisibleNodes,
             _prevRenderedNodes
           );
-          this._prevRenderedNodes = new Map(visibleNodes);
+          // The batcher returns a cached Map, no need to copy again
+          this._prevRenderedNodes = visibleNodes;
         } else {
           visibleNodes = allVisibleNodes;
         }
@@ -306,7 +326,7 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
           transform,
           width,
           height,
-          buffer: visibilityBuffer
+          buffer: zoomScaledBuffer
         });
 
         // Progressive edge loading (independent)
@@ -315,7 +335,8 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
             allVisibleEdges,
             _prevRenderedEdges
           );
-          this._prevRenderedEdges = new Map(visibleEdges);
+          // The batcher returns a cached Map, no need to copy again
+          this._prevRenderedEdges = visibleEdges;
         } else {
           visibleEdges = allVisibleEdges;
         }

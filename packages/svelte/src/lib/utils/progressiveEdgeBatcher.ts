@@ -1,31 +1,38 @@
 import type { Edge, EdgeLayouted } from '$lib/types';
 
+export type PanDirection = { x: number; y: number };
+
 /**
  * Manages progressive loading of edges to prevent lag spikes when many edges
  * become visible at once during rapid panning.
  *
- * When the number of newly visible edges exceeds a threshold, edges are added
- * in batches across multiple frames instead of all at once.
+ * When the number of newly visible edges exceeds a threshold, only a batch
+ * of edges are added per updateVisibleEdges call instead of all at once.
+ * The remaining edges are queued and added on subsequent calls.
  */
 export class ProgressiveEdgeBatcher<EdgeType extends Edge = Edge> {
   private pendingEdges: Map<string, EdgeLayouted<EdgeType>> = new Map();
   private renderedEdges: Map<string, EdgeLayouted<EdgeType>> = new Map();
-  private rafId: number | null = null;
   private batchSize: number;
   private threshold: number;
-  private onUpdate: () => void;
-  private accumulator: number = 0; // For fractional batch sizes
-  private isFlushing: boolean = false; // Prevents interruption during gradual flush
 
-  constructor(options: { threshold: number; batchSize: number; onUpdate: () => void }) {
+  // Cache to avoid creating new Maps when nothing changed
+  private cachedReturnMap: Map<string, EdgeLayouted<EdgeType>> | null = null;
+  private dirty: boolean = true;
+
+  // Callback for when rendered edges change
+  private onUpdate: (() => void) | null = null;
+
+  constructor(options: { threshold: number; batchSize: number; onUpdate?: () => void }) {
     this.threshold = options.threshold;
     this.batchSize = options.batchSize;
-    this.onUpdate = options.onUpdate;
+    this.onUpdate = options.onUpdate ?? null;
   }
 
   /**
    * Update the visible edges. Returns the edges that should actually be rendered.
-   * If there are too many new edges, they'll be queued and added progressively.
+   * If there are too many new edges, they'll be queued and added progressively
+   * on subsequent calls.
    */
   updateVisibleEdges(
     allVisibleEdges: Map<string, EdgeLayouted<EdgeType>>,
@@ -37,10 +44,16 @@ export class ProgressiveEdgeBatcher<EdgeType extends Edge = Edge> {
       return allVisibleEdges;
     }
 
+    let hasChanges = false;
+
     // Find newly visible edges (in allVisible but not already rendered or pending)
     const newlyVisible: Map<string, EdgeLayouted<EdgeType>> = new Map();
     for (const [id, edge] of allVisibleEdges) {
-      if (!previouslyRenderedEdges.has(id) && !this.renderedEdges.has(id) && !this.pendingEdges.has(id)) {
+      if (
+        !previouslyRenderedEdges.has(id) &&
+        !this.renderedEdges.has(id) &&
+        !this.pendingEdges.has(id)
+      ) {
         newlyVisible.set(id, edge);
       }
     }
@@ -49,6 +62,7 @@ export class ProgressiveEdgeBatcher<EdgeType extends Edge = Edge> {
     for (const id of this.renderedEdges.keys()) {
       if (!allVisibleEdges.has(id)) {
         this.renderedEdges.delete(id);
+        hasChanges = true;
       }
     }
 
@@ -59,81 +73,65 @@ export class ProgressiveEdgeBatcher<EdgeType extends Edge = Edge> {
       }
     }
 
-    // Update existing rendered edges with fresh data
+    // Update existing rendered edges with fresh data (references may have changed)
     for (const [id, edge] of allVisibleEdges) {
       if (this.renderedEdges.has(id)) {
-        this.renderedEdges.set(id, edge);
+        const existing = this.renderedEdges.get(id);
+        // Only update if the edge reference actually changed
+        if (existing !== edge) {
+          this.renderedEdges.set(id, edge);
+          hasChanges = true;
+        }
+      }
+    }
+
+    // Process pending edges first - add a batch of them to rendered
+    if (this.pendingEdges.size > 0) {
+      let added = 0;
+      for (const [id, edge] of this.pendingEdges) {
+        if (added >= this.batchSize) break;
+        // Only add if still visible
+        if (allVisibleEdges.has(id)) {
+          this.renderedEdges.set(id, edge);
+          hasChanges = true;
+        }
+        this.pendingEdges.delete(id);
+        added++;
       }
     }
 
     // If new edges exceed threshold, queue them for progressive loading
     if (newlyVisible.size > this.threshold) {
-      // Clear any existing pending edges to prevent accumulation
-      // This keeps the batcher focused on the current viewport
-      // BUT don't interrupt if we're in the middle of a gradual flush
-      if (this.pendingEdges.size > 0 && !this.isFlushing) {
-        if (this.rafId !== null) {
-          cancelAnimationFrame(this.rafId);
-          this.rafId = null;
-        }
-        this.pendingEdges.clear();
-        this.accumulator = 0;
-      }
-
       // Add new edges to pending queue
       for (const [id, edge] of newlyVisible) {
         this.pendingEdges.set(id, edge);
       }
-
-      // Start progressive loading (only if not already flushing)
-      if (!this.isFlushing) {
-        this.scheduleNextBatch();
+      // Add first batch immediately
+      let added = 0;
+      for (const [id, edge] of this.pendingEdges) {
+        if (added >= this.batchSize) break;
+        if (allVisibleEdges.has(id)) {
+          this.renderedEdges.set(id, edge);
+          hasChanges = true;
+        }
+        this.pendingEdges.delete(id);
+        added++;
       }
     } else if (newlyVisible.size > 0) {
       // Below threshold - add all new edges immediately
       for (const [id, edge] of newlyVisible) {
         this.renderedEdges.set(id, edge);
       }
+      hasChanges = true;
     }
 
-    // Return a new Map so Svelte detects the change
-    return new Map(this.renderedEdges);
-  }
-
-  private scheduleNextBatch() {
-    if (this.rafId !== null || this.pendingEdges.size === 0) {
-      return;
+    // Only create a new Map if something actually changed
+    if (hasChanges || this.dirty || this.cachedReturnMap === null) {
+      this.cachedReturnMap = new Map(this.renderedEdges);
+      this.dirty = false;
     }
 
-    this.rafId = requestAnimationFrame(() => {
-      this.rafId = null;
-
-      // Accumulate batch size (supports fractional values like 0.1)
-      // e.g., batchSize=0.1 means add 1 edge every 10 frames
-      this.accumulator += this.batchSize;
-      const edgesToAdd = Math.floor(this.accumulator);
-      this.accumulator -= edgesToAdd;
-
-      // Add next batch of edges
-      let added = 0;
-      for (const [id, edge] of this.pendingEdges) {
-        if (added >= edgesToAdd) break;
-
-        this.renderedEdges.set(id, edge);
-        this.pendingEdges.delete(id);
-        added++;
-      }
-
-      // Notify that rendered edges changed
-      if (added > 0) {
-        this.onUpdate();
-      }
-
-      // Schedule next batch if more pending
-      if (this.pendingEdges.size > 0) {
-        this.scheduleNextBatch();
-      }
-    });
+    return this.cachedReturnMap;
   }
 
   /**
@@ -151,78 +149,44 @@ export class ProgressiveEdgeBatcher<EdgeType extends Edge = Edge> {
   }
 
   /**
-   * Flush all pending edges immediately (can cause lag with many edges).
+   * Flush all pending edges immediately.
    */
   flush() {
-    if (this.rafId !== null) {
-      cancelAnimationFrame(this.rafId);
-      this.rafId = null;
-    }
-
-    // Add all pending edges immediately
     for (const [id, edge] of this.pendingEdges) {
       this.renderedEdges.set(id, edge);
     }
     this.pendingEdges.clear();
-
-    this.onUpdate();
+    this.dirty = true;
+    this.onUpdate?.();
   }
 
   /**
-   * Flush pending edges gradually over multiple frames to avoid lag spikes.
-   * Uses larger batches than normal progressive loading for faster completion.
+   * Flush pending edges gradually (adds batchSize edges).
+   * Call this multiple times to gradually flush all pending edges.
    */
-  flushGradually(batchSize: number = 50) {
-    // Cancel any existing batch operation first
-    if (this.rafId !== null) {
-      cancelAnimationFrame(this.rafId);
-      this.rafId = null;
+  flushGradually(batchSize?: number) {
+    const size = batchSize ?? this.batchSize;
+    let added = 0;
+    for (const [id, edge] of this.pendingEdges) {
+      if (added >= size) break;
+      this.renderedEdges.set(id, edge);
+      this.pendingEdges.delete(id);
+      added++;
     }
-
-    if (this.pendingEdges.size === 0) {
-      this.isFlushing = false;
-      return;
+    if (added > 0) {
+      this.dirty = true;
+      this.onUpdate?.();
     }
-
-    // Mark that we're in flush mode to prevent updateVisibleEdges from interrupting
-    this.isFlushing = true;
-
-    this.rafId = requestAnimationFrame(() => {
-      this.rafId = null;
-
-      let added = 0;
-      for (const [id, edge] of this.pendingEdges) {
-        if (added >= batchSize) break;
-        this.renderedEdges.set(id, edge);
-        this.pendingEdges.delete(id);
-        added++;
-      }
-
-      if (added > 0) {
-        this.onUpdate();
-      }
-
-      // Continue flushing if more pending
-      if (this.pendingEdges.size > 0) {
-        this.flushGradually(batchSize);
-      } else {
-        this.isFlushing = false;
-      }
-    });
   }
 
   /**
    * Reset the batcher state.
    */
   reset() {
-    if (this.rafId !== null) {
-      cancelAnimationFrame(this.rafId);
-      this.rafId = null;
-    }
     this.pendingEdges.clear();
     this.renderedEdges.clear();
-    this.accumulator = 0;
-    this.isFlushing = false;
+    this.cachedReturnMap = null;
+    this.dirty = true;
   }
 
   /**
@@ -241,12 +205,9 @@ export class ProgressiveEdgeBatcher<EdgeType extends Edge = Edge> {
    * Cleanup.
    */
   destroy() {
-    if (this.rafId !== null) {
-      cancelAnimationFrame(this.rafId);
-      this.rafId = null;
-    }
     this.pendingEdges.clear();
     this.renderedEdges.clear();
-    this.isFlushing = false;
+    this.cachedReturnMap = null;
+    this.dirty = true;
   }
 }

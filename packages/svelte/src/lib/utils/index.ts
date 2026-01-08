@@ -36,3 +36,4 @@ export const arrowKeyDiffs: Record<string, XYPosition> = {
 export { ViewportBatcher } from './viewportBatcher';
 export { ProgressiveNodeBatcher } from './progressiveNodeBatcher';
 export { ProgressiveEdgeBatcher } from './progressiveEdgeBatcher';
+export { StaggeredResizeObserver } from './staggeredResizeObserver';

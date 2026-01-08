@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
 
   import { NodeWrapper } from '../../components/NodeWrapper';
+  import { StaggeredResizeObserver } from '../../utils/staggeredResizeObserver';
 
   import type { Node, Edge, NodeEvents } from '../../types';
   import type { SvelteFlowStore } from '../../store/types';
@@ -24,10 +25,13 @@
 
   let pendingResizeUpdates = new Map<string, ResizeObserverEntry>();
 
-  const resizeObserver: ResizeObserver | null =
+  // Use StaggeredResizeObserver to prevent lag spikes when many nodes mount at once.
+  // Instead of observing all nodes in a single frame, observations are batched
+  // across multiple frames (5 per frame by default).
+  const resizeObserver: StaggeredResizeObserver | null =
     typeof ResizeObserver === 'undefined'
       ? null
-      : new ResizeObserver((entries: ResizeObserverEntry[]) => {
+      : new StaggeredResizeObserver((entries: ResizeObserverEntry[]) => {
           // Skip updates during panning to reduce layout thrashing
           // Store pending updates to process after dragging stops
           if (store.dragging) {
@@ -52,7 +56,7 @@
           });
 
           store.updateNodeInternals(updates);
-        });
+        }, 30); // Process 5 observe() calls per frame
 
   // Process pending resize updates after panning stops
   $effect(() => {
