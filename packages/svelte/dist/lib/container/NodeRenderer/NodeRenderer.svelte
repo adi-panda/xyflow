@@ -83,6 +83,22 @@
 </script>
 
 <div class="svelte-flow__nodes">
+  {#each store.visible.pendingNodes.values() as node (node.id)}
+    <div
+      class="svelte-flow__node-placeholder"
+      style="
+        position: absolute;
+        transform: translate({node.internals.positionAbsolute.x}px, {node.internals.positionAbsolute
+        .y}px);
+        width: {256}px;
+        height: {256}px;
+        background: var(--xy-node-placeholder-background-color, rgba(200, 200, 200, 0.3));
+        border: 1px dashed var(--xy-node-placeholder-border-color, rgba(150, 150, 150, 0.5));
+        border-radius: var(--xy-node-border-radius, 3px);
+        pointer-events: none;
+      "
+    ></div>
+  {/each}
   {#each store.visible.nodes.values() as node (node.id)}
     <NodeWrapper
       bind:store

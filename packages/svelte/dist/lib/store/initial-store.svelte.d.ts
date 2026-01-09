@@ -57,6 +57,7 @@ export declare function getInitialStore<NodeType extends Node = Node, EdgeType e
     visible: {
         nodes: Map<string, InternalNode<NodeType>>;
         edges: Map<string, EdgeLayouted<EdgeType>>;
+        pendingNodes: Map<string, InternalNode<NodeType>>;
     };
     nodesDraggable: boolean;
     nodesConnectable: boolean;

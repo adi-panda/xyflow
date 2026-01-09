@@ -34,6 +34,7 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
 
   // Cache to avoid creating new Maps when nothing changed
   private cachedReturnMap: Map<string, InternalNode<NodeType>> | null = null;
+  private cachedPendingMap: Map<string, InternalNode<NodeType>> = new Map();
   private lastRenderedSize: number = 0;
   private dirty: boolean = true;
 
@@ -113,25 +114,14 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
           `[NodeBatcher] PROGRESSIVE: ${newlyVisible.size} new nodes > threshold ${this.threshold}, queueing`
         );
       }
-      // Clear any existing pending nodes to prevent accumulation
-      // This keeps the batcher focused on the current viewport
-      // BUT don't interrupt if we're in the middle of a gradual flush
-      if (this.pendingNodes.size > 0 && !this.isFlushing) {
-        if (this.rafId !== null) {
-          cancelAnimationFrame(this.rafId);
-          this.rafId = null;
-        }
-        this.pendingNodes.clear();
-        this.accumulator = 0;
-      }
 
-      // Add new nodes to pending queue
+      // Add new nodes to pending queue (keep existing visible pending nodes)
       for (const [id, node] of newlyVisible) {
         this.pendingNodes.set(id, node);
       }
 
-      // Start progressive loading (only if not already flushing)
-      if (!this.isFlushing) {
+      // Start progressive loading (only if not already running)
+      if (!this.isFlushing && this.rafId === null) {
         this.scheduleNextBatch();
       }
     } else if (newlyVisible.size > 0) {
@@ -147,9 +137,10 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
       hasChanges = true;
     }
 
-    // Only create a new Map if something actually changed
+    // Only create new Maps if something actually changed
     if (hasChanges || this.dirty || this.cachedReturnMap === null) {
       this.cachedReturnMap = new Map(this.renderedNodes);
+      this.cachedPendingMap = new Map(this.pendingNodes);
       this.lastRenderedSize = this.renderedNodes.size;
       this.dirty = false;
     }
@@ -205,6 +196,14 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
    */
   getRenderedNodes(): Map<string, InternalNode<NodeType>> {
     return this.renderedNodes;
+  }
+
+  /**
+   * Get nodes that are pending to be rendered (for placeholder display).
+   * Returns a cached snapshot that's consistent with getRenderedNodes().
+   */
+  getPendingNodes(): Map<string, InternalNode<NodeType>> {
+    return this.cachedPendingMap;
   }
 
   /**
@@ -292,6 +291,7 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     this.pendingNodes.clear();
     this.renderedNodes.clear();
     this.cachedReturnMap = null;
+    this.cachedPendingMap = new Map();
     this.lastRenderedSize = 0;
     this.dirty = true;
     this.accumulator = 0;
@@ -321,6 +321,7 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     this.pendingNodes.clear();
     this.renderedNodes.clear();
     this.cachedReturnMap = null;
+    this.cachedPendingMap = new Map();
     this.lastRenderedSize = 0;
     this.dirty = true;
     this.isFlushing = false;

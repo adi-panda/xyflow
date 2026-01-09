@@ -345,9 +345,16 @@ export function getInitialStore<NodeType extends Node = Node, EdgeType extends E
         visibleEdges = getLayoutedEdges(options as EdgeLayoutAllOptions<NodeType, EdgeType>);
       }
 
+      // Get pending nodes for placeholder display
+      let pendingNodes: Map<string, InternalNode<NodeType>> = new Map();
+      if (progressiveNodeThreshold > 0 && progressiveNodeBatcher && onlyRenderVisibleElements) {
+        pendingNodes = progressiveNodeBatcher.getPendingNodes();
+      }
+
       return {
         nodes: visibleNodes,
-        edges: visibleEdges
+        edges: visibleEdges,
+        pendingNodes
       };
     });
 

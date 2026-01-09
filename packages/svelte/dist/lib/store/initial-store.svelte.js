@@ -215,9 +215,15 @@ export function getInitialStore(signals) {
                 visibleNodes = this.nodeLookup;
                 visibleEdges = getLayoutedEdges(options);
             }
+            // Get pending nodes for placeholder display
+            let pendingNodes = new Map();
+            if (progressiveNodeThreshold > 0 && progressiveNodeBatcher && onlyRenderVisibleElements) {
+                pendingNodes = progressiveNodeBatcher.getPendingNodes();
+            }
             return {
                 nodes: visibleNodes,
-                edges: visibleEdges
+                edges: visibleEdges,
+                pendingNodes
             };
         });
         nodesDraggable = $derived(signals.props.nodesDraggable ?? true);

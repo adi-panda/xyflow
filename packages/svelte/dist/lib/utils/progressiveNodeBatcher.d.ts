@@ -27,6 +27,7 @@ export declare class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     private readonly UPDATE_THROTTLE_MS;
     private onUpdate;
     private cachedReturnMap;
+    private cachedPendingMap;
     private lastRenderedSize;
     private dirty;
     constructor(options: {
@@ -49,6 +50,11 @@ export declare class ProgressiveNodeBatcher<NodeType extends Node = Node> {
      * Get the currently rendered nodes.
      */
     getRenderedNodes(): Map<string, InternalNode<NodeType>>;
+    /**
+     * Get nodes that are pending to be rendered (for placeholder display).
+     * Returns a cached snapshot that's consistent with getRenderedNodes().
+     */
+    getPendingNodes(): Map<string, InternalNode<NodeType>>;
     /**
      * Check if there are nodes still pending to be rendered.
      */
