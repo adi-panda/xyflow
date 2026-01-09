@@ -12,6 +12,7 @@ export declare class StaggeredResizeObserver {
     private pendingUnobserve;
     private rafId;
     private batchSize;
+    private listIndex;
     constructor(callback: ResizeObserverCallback, batchSize?: number);
     /**
      * Queue an element to be observed. The actual observe() call will be

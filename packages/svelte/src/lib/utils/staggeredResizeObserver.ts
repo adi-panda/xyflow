@@ -12,6 +12,7 @@ export class StaggeredResizeObserver {
   private pendingUnobserve: Set<Element> = new Set();
   private rafId: number | null = null;
   private batchSize: number;
+  private listIndex: number = 0; // Pointer to avoid O(n) shift()
 
   constructor(callback: ResizeObserverCallback, batchSize = 5) {
     this.observer = new ResizeObserver(callback);
@@ -70,14 +71,16 @@ export class StaggeredResizeObserver {
     }
     this.pendingUnobserve.clear();
 
-    // Then observe all pending (only elements still in Set)
-    for (const element of this.pendingObserveList) {
+    // Then observe all pending (only elements still in Set, starting from current index)
+    for (let i = this.listIndex; i < this.pendingObserveList.length; i++) {
+      const element = this.pendingObserveList[i];
       if (this.pendingObserveSet.has(element)) {
         this.observer.observe(element);
       }
     }
     this.pendingObserveList = [];
     this.pendingObserveSet.clear();
+    this.listIndex = 0;
   }
 
   /**
@@ -91,6 +94,7 @@ export class StaggeredResizeObserver {
     this.pendingObserveList = [];
     this.pendingObserveSet.clear();
     this.pendingUnobserve.clear();
+    this.listIndex = 0;
     this.observer.disconnect();
   }
 
@@ -110,16 +114,28 @@ export class StaggeredResizeObserver {
     }
     this.pendingUnobserve.clear();
 
-    // Process a batch of observes, skipping any that were unobserved
+    // Process a batch of observes using index pointer (O(1) per element instead of O(n) shift)
     let processed = 0;
-    while (this.pendingObserveList.length > 0 && processed < this.batchSize) {
-      const element = this.pendingObserveList.shift()!;
+    while (this.listIndex < this.pendingObserveList.length && processed < this.batchSize) {
+      const element = this.pendingObserveList[this.listIndex];
+      this.listIndex++;
+
       // Only observe if still in Set (wasn't unobserved)
       if (this.pendingObserveSet.has(element)) {
         this.pendingObserveSet.delete(element);
         this.observer.observe(element);
         processed++;
       }
+    }
+
+    // Compact the list when we've processed everything to prevent memory growth
+    if (this.listIndex >= this.pendingObserveList.length) {
+      this.pendingObserveList = [];
+      this.listIndex = 0;
+    } else if (this.listIndex > 1000) {
+      // Periodically compact if we have many processed elements to prevent memory bloat
+      this.pendingObserveList = this.pendingObserveList.slice(this.listIndex);
+      this.listIndex = 0;
     }
 
     // Schedule next batch if there's more
