@@ -23,6 +23,8 @@ export declare class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     private rafId;
     private accumulator;
     private isFlushing;
+    private lastUpdateTime;
+    private readonly UPDATE_THROTTLE_MS;
     private onUpdate;
     private cachedReturnMap;
     private lastRenderedSize;

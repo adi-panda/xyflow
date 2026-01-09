@@ -19,6 +19,9 @@ export class ProgressiveNodeBatcher {
     rafId = null;
     accumulator = 0;
     isFlushing = false;
+    // Throttle updates during progressive loading to reduce derivation frequency
+    lastUpdateTime = 0;
+    UPDATE_THROTTLE_MS = 50; // Update at most every 50ms during batching
     // Callback for when rendered nodes change
     onUpdate = null;
     // Cache to avoid creating new Maps when nothing changed
