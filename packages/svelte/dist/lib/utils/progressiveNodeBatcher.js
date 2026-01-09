@@ -72,6 +72,7 @@ export class ProgressiveNodeBatcher {
         for (const id of this.pendingNodes.keys()) {
             if (!allVisibleNodes.has(id)) {
                 this.pendingNodes.delete(id);
+                hasChanges = true; // Mark as changed so cache updates
             }
         }
         // Update existing rendered nodes with fresh data (references may have changed)
@@ -84,18 +85,35 @@ export class ProgressiveNodeBatcher {
                     hasChanges = true;
                 }
             }
+            // Also update pending nodes with fresh data to keep placeholder positions accurate
+            if (this.pendingNodes.has(id)) {
+                const existing = this.pendingNodes.get(id);
+                if (existing !== node) {
+                    this.pendingNodes.set(id, node);
+                    hasChanges = true;
+                }
+            }
         }
         // If new nodes exceed threshold, queue them for progressive loading
         if (newlyVisible.size > this.threshold) {
             if (this.debug) {
                 console.log(`[NodeBatcher] PROGRESSIVE: ${newlyVisible.size} new nodes > threshold ${this.threshold}, queueing`);
             }
-            // Add new nodes to pending queue (keep existing visible pending nodes)
+            // Cancel any scheduled RAF but DON'T clear pending nodes that are still visible
+            // Clearing them causes flickering because they're not in newlyVisible (already in pending)
+            // and would be lost
+            if (!this.isFlushing && this.rafId !== null) {
+                cancelAnimationFrame(this.rafId);
+                this.rafId = null;
+                this.accumulator = 0;
+            }
+            // Add new nodes to pending queue (existing pending nodes that are still visible remain)
             for (const [id, node] of newlyVisible) {
                 this.pendingNodes.set(id, node);
             }
-            // Start progressive loading (only if not already running)
-            if (!this.isFlushing && this.rafId === null) {
+            hasChanges = true; // Mark as changed so cache updates
+            // Start progressive loading (only if not already flushing)
+            if (!this.isFlushing) {
                 this.scheduleNextBatch();
             }
         }
@@ -144,6 +162,8 @@ export class ProgressiveNodeBatcher {
             // Notify that rendered nodes changed
             if (added > 0) {
                 this.dirty = true; // Mark dirty so next updateVisibleNodes creates new Map
+                // Update cached pending map immediately to prevent flicker
+                this.cachedPendingMap = new Map(this.pendingNodes);
                 this.onUpdate?.();
             }
             // Schedule next batch if more pending
@@ -188,6 +208,8 @@ export class ProgressiveNodeBatcher {
         }
         this.pendingNodes.clear();
         this.dirty = true;
+        // Update cached pending map immediately to prevent flicker
+        this.cachedPendingMap = new Map();
         this.onUpdate?.();
     }
     /**
@@ -218,6 +240,8 @@ export class ProgressiveNodeBatcher {
             }
             if (added > 0) {
                 this.dirty = true;
+                // Update cached pending map immediately to prevent flicker
+                this.cachedPendingMap = new Map(this.pendingNodes);
                 this.onUpdate?.();
             }
             // Continue flushing if more pending
