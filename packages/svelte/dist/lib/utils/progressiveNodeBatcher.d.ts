@@ -19,27 +19,18 @@ export declare class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     private batchSize;
     private threshold;
     private debug;
-    private panDirection;
     private rafId;
     private accumulator;
     private isFlushing;
-    private lastUpdateTime;
-    private readonly UPDATE_THROTTLE_MS;
     private onUpdate;
     private cachedReturnMap;
     private cachedPendingMap;
-    private lastRenderedSize;
     private dirty;
     constructor(options: {
         threshold: number;
         batchSize: number;
         onUpdate?: () => void;
     });
-    /**
-     * Update the pan direction. This affects how pending nodes are sorted.
-     * @param direction The viewport delta (positive x = panning left, negative x = panning right)
-     */
-    setPanDirection(direction: PanDirection): void;
     /**
      * Update the visible nodes. Returns the nodes that should actually be rendered.
      * If there are too many new nodes, they'll be queued and added progressively.

@@ -18,16 +18,11 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
   private batchSize: number;
   private threshold: number;
   private debug: boolean = false; // Enable debug logging
-  private panDirection: PanDirection = { x: 0, y: 0 }; // Current pan direction (viewport delta)
 
   // RAF and batching state
   private rafId: number | null = null;
   private accumulator: number = 0;
   private isFlushing: boolean = false;
-
-  // Throttle updates during progressive loading to reduce derivation frequency
-  private lastUpdateTime: number = 0;
-  private readonly UPDATE_THROTTLE_MS = 50; // Update at most every 50ms during batching
 
   // Callback for when rendered nodes change
   private onUpdate: (() => void) | null = null;
@@ -35,21 +30,12 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
   // Cache to avoid creating new Maps when nothing changed
   private cachedReturnMap: Map<string, InternalNode<NodeType>> | null = null;
   private cachedPendingMap: Map<string, InternalNode<NodeType>> = new Map();
-  private lastRenderedSize: number = 0;
   private dirty: boolean = true;
 
   constructor(options: { threshold: number; batchSize: number; onUpdate?: () => void }) {
     this.threshold = options.threshold;
     this.batchSize = options.batchSize;
     this.onUpdate = options.onUpdate ?? null;
-  }
-
-  /**
-   * Update the pan direction. This affects how pending nodes are sorted.
-   * @param direction The viewport delta (positive x = panning left, negative x = panning right)
-   */
-  setPanDirection(direction: PanDirection) {
-    this.panDirection = direction;
   }
 
   /**
@@ -159,7 +145,6 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     if (hasChanges || this.dirty || this.cachedReturnMap === null) {
       this.cachedReturnMap = new Map(this.renderedNodes);
       this.cachedPendingMap = new Map(this.pendingNodes);
-      this.lastRenderedSize = this.renderedNodes.size;
       this.dirty = false;
     }
 
@@ -316,7 +301,6 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     this.renderedNodes.clear();
     this.cachedReturnMap = null;
     this.cachedPendingMap = new Map();
-    this.lastRenderedSize = 0;
     this.dirty = true;
     this.accumulator = 0;
     this.isFlushing = false;
@@ -346,7 +330,6 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     this.renderedNodes.clear();
     this.cachedReturnMap = null;
     this.cachedPendingMap = new Map();
-    this.lastRenderedSize = 0;
     this.dirty = true;
     this.isFlushing = false;
   }

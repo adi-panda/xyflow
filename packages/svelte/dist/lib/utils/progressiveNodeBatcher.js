@@ -14,32 +14,20 @@ export class ProgressiveNodeBatcher {
     batchSize;
     threshold;
     debug = false; // Enable debug logging
-    panDirection = { x: 0, y: 0 }; // Current pan direction (viewport delta)
     // RAF and batching state
     rafId = null;
     accumulator = 0;
     isFlushing = false;
-    // Throttle updates during progressive loading to reduce derivation frequency
-    lastUpdateTime = 0;
-    UPDATE_THROTTLE_MS = 50; // Update at most every 50ms during batching
     // Callback for when rendered nodes change
     onUpdate = null;
     // Cache to avoid creating new Maps when nothing changed
     cachedReturnMap = null;
     cachedPendingMap = new Map();
-    lastRenderedSize = 0;
     dirty = true;
     constructor(options) {
         this.threshold = options.threshold;
         this.batchSize = options.batchSize;
         this.onUpdate = options.onUpdate ?? null;
-    }
-    /**
-     * Update the pan direction. This affects how pending nodes are sorted.
-     * @param direction The viewport delta (positive x = panning left, negative x = panning right)
-     */
-    setPanDirection(direction) {
-        this.panDirection = direction;
     }
     /**
      * Update the visible nodes. Returns the nodes that should actually be rendered.
@@ -131,7 +119,6 @@ export class ProgressiveNodeBatcher {
         if (hasChanges || this.dirty || this.cachedReturnMap === null) {
             this.cachedReturnMap = new Map(this.renderedNodes);
             this.cachedPendingMap = new Map(this.pendingNodes);
-            this.lastRenderedSize = this.renderedNodes.size;
             this.dirty = false;
         }
         return this.cachedReturnMap;
@@ -265,7 +252,6 @@ export class ProgressiveNodeBatcher {
         this.renderedNodes.clear();
         this.cachedReturnMap = null;
         this.cachedPendingMap = new Map();
-        this.lastRenderedSize = 0;
         this.dirty = true;
         this.accumulator = 0;
         this.isFlushing = false;
@@ -293,7 +279,6 @@ export class ProgressiveNodeBatcher {
         this.renderedNodes.clear();
         this.cachedReturnMap = null;
         this.cachedPendingMap = new Map();
-        this.lastRenderedSize = 0;
         this.dirty = true;
         this.isFlushing = false;
     }
