@@ -92,11 +92,11 @@
       // Flush pending updates for pixel-perfect final positioning
       store.viewportBatcher?.flush();
       // Gradually flush any remaining progressive nodes/edges when panning stops
-      flushTimeoutId = setTimeout(() => {
-        store.flushProgressiveNodesGradually(10);
-        store.flushProgressiveEdgesGradually(10);
-        flushTimeoutId = null;
-      }, 300);
+      // flushTimeoutId = setTimeout(() => {
+      //   store.flushProgressiveNodesGradually(10);
+      //   store.flushProgressiveEdgesGradually(10);
+      //   flushTimeoutId = null;
+      // }, 300);
       onmoveend?.(event, viewport);
     },
     zoomOnScroll,
