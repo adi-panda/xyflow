@@ -184,7 +184,8 @@ export function getInitialStore(signals) {
                     // At zoom=1, use configured batch size. At zoom=2, use half. Min 1.
                     const scaledBatchSize = Math.max(1, Math.round(this.progressiveNodeBatchSize / Math.max(1, viewport.zoom)));
                     progressiveNodeBatcher.updateConfig({ batchSize: scaledBatchSize });
-                    visibleNodes = progressiveNodeBatcher.updateVisibleNodes(allVisibleNodes, _prevRenderedNodes);
+                    // Pass viewport position for velocity tracking (used to defer loading when panning fast)
+                    visibleNodes = progressiveNodeBatcher.updateVisibleNodes(allVisibleNodes, _prevRenderedNodes, { x: viewport.x, y: viewport.y });
                     // The batcher returns a cached Map, no need to copy again
                     this._prevRenderedNodes = visibleNodes;
                 }
@@ -203,7 +204,8 @@ export function getInitialStore(signals) {
                 });
                 // Progressive edge loading (independent)
                 if (progressiveEdgeThreshold > 0 && progressiveEdgeBatcher) {
-                    visibleEdges = progressiveEdgeBatcher.updateVisibleEdges(allVisibleEdges, _prevRenderedEdges);
+                    // Pass viewport position for velocity tracking (used to defer loading when panning fast)
+                    visibleEdges = progressiveEdgeBatcher.updateVisibleEdges(allVisibleEdges, _prevRenderedEdges, { x: viewport.x, y: viewport.y });
                     // The batcher returns a cached Map, no need to copy again
                     this._prevRenderedEdges = visibleEdges;
                 }
@@ -321,6 +323,7 @@ export function getInitialStore(signals) {
         progressiveNodeBatchSize = $derived(signals.props.progressiveNodeBatchSize ?? 15);
         progressiveEdgeThreshold = $derived(signals.props.progressiveEdgeThreshold ?? 0);
         progressiveEdgeBatchSize = $derived(signals.props.progressiveEdgeBatchSize ?? 20);
+        progressiveMaxPanVelocity = $derived(signals.props.progressiveMaxPanVelocity ?? 0);
         onerror = $derived(signals.props.onflowerror ?? devWarn);
         ondelete = $derived(signals.props.ondelete);
         onbeforedelete = $derived(signals.props.onbeforedelete);
@@ -373,6 +376,7 @@ export function getInitialStore(signals) {
                     this._viewport = viewport;
                 }, this.viewportUpdateThrottle // Normal throttle (e.g., 0-33ms)
                 );
+                this.viewportBatcher.setDebugPerf(true);
             }
         }
         setViewportUpdateSource(isInternal) {
@@ -390,11 +394,13 @@ export function getInitialStore(signals) {
                 this.progressiveNodeBatcher = new ProgressiveNodeBatcher({
                     threshold: this.progressiveNodeThreshold,
                     batchSize: this.progressiveNodeBatchSize,
+                    maxPanVelocity: this.progressiveMaxPanVelocity,
                     onUpdate: () => {
                         // Increment trigger to force re-derivation of visible nodes
                         this._progressiveTrigger++;
                     }
                 });
+                this.progressiveNodeBatcher.setDebugPerf(true);
             }
         }
         flushProgressiveNodes() {
@@ -415,6 +421,7 @@ export function getInitialStore(signals) {
                 this.progressiveEdgeBatcher = new ProgressiveEdgeBatcher({
                     threshold: this.progressiveEdgeThreshold,
                     batchSize: this.progressiveEdgeBatchSize,
+                    maxPanVelocity: this.progressiveMaxPanVelocity,
                     onUpdate: () => {
                         // Increment trigger to force re-derivation of visible edges
                         this._progressiveTrigger++;

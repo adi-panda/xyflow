@@ -23,21 +23,57 @@ export class ProgressiveEdgeBatcher<EdgeType extends Edge = Edge> {
   // Callback for when rendered edges change
   private onUpdate: (() => void) | null = null;
 
-  constructor(options: { threshold: number; batchSize: number; onUpdate?: () => void }) {
+  // Velocity tracking for pan-speed-based loading
+  private maxPanVelocity: number; // pixels per second - only load when below this
+  private lastViewportPos: { x: number; y: number } | null = null;
+  private lastUpdateTime: number = 0;
+  private currentVelocity: number = 0;
+  private isPanningFast: boolean = false;
+  private staleCheckTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private readonly STALE_VELOCITY_THRESHOLD_MS = 100; // If no update for this long, assume stopped
+
+  constructor(options: {
+    threshold: number;
+    batchSize: number;
+    onUpdate?: () => void;
+    maxPanVelocity?: number;
+  }) {
     this.threshold = options.threshold;
     this.batchSize = options.batchSize;
     this.onUpdate = options.onUpdate ?? null;
+    this.maxPanVelocity = options.maxPanVelocity ?? 0; // 0 = disabled (always load)
   }
 
   /**
    * Update the visible edges. Returns the edges that should actually be rendered.
    * If there are too many new edges, they'll be queued and added progressively
    * on subsequent calls.
+   *
+   * @param viewportPos - Optional viewport position for velocity tracking.
+   *   If maxPanVelocity is set, progressive loading only happens when velocity is below the threshold.
    */
   updateVisibleEdges(
     allVisibleEdges: Map<string, EdgeLayouted<EdgeType>>,
-    previouslyRenderedEdges: Map<string, EdgeLayouted<EdgeType>>
+    previouslyRenderedEdges: Map<string, EdgeLayouted<EdgeType>>,
+    viewportPos?: { x: number; y: number }
   ): Map<string, EdgeLayouted<EdgeType>> {
+    // Update velocity tracking if viewport position is provided
+    if (viewportPos && this.maxPanVelocity > 0) {
+      const now = performance.now();
+      if (this.lastViewportPos !== null && this.lastUpdateTime > 0) {
+        const dt = (now - this.lastUpdateTime) / 1000; // seconds
+        if (dt > 0) {
+          const dx = viewportPos.x - this.lastViewportPos.x;
+          const dy = viewportPos.y - this.lastViewportPos.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          this.currentVelocity = distance / dt; // pixels per second
+          this.isPanningFast = this.currentVelocity > this.maxPanVelocity;
+        }
+      }
+      this.lastViewportPos = { ...viewportPos };
+      this.lastUpdateTime = now;
+    }
+
     // If progressive loading is disabled (threshold = 0), return all edges immediately
     if (this.threshold === 0) {
       this.renderedEdges = allVisibleEdges;
@@ -86,17 +122,23 @@ export class ProgressiveEdgeBatcher<EdgeType extends Edge = Edge> {
     }
 
     // Process pending edges first - add a batch of them to rendered
+    // Only process when not panning too fast (or velocity tracking disabled)
     if (this.pendingEdges.size > 0) {
-      let added = 0;
-      for (const [id, edge] of this.pendingEdges) {
-        if (added >= this.batchSize) break;
-        // Only add if still visible
-        if (allVisibleEdges.has(id)) {
-          this.renderedEdges.set(id, edge);
-          hasChanges = true;
+      if (!this.isPanningFast) {
+        let added = 0;
+        for (const [id, edge] of this.pendingEdges) {
+          if (added >= this.batchSize) break;
+          // Only add if still visible
+          if (allVisibleEdges.has(id)) {
+            this.renderedEdges.set(id, edge);
+            hasChanges = true;
+          }
+          this.pendingEdges.delete(id);
+          added++;
         }
-        this.pendingEdges.delete(id);
-        added++;
+      } else {
+        // Schedule a check for when panning stops (velocity becomes stale)
+        this.scheduleStaleVelocityCheck();
       }
     }
 
@@ -106,19 +148,25 @@ export class ProgressiveEdgeBatcher<EdgeType extends Edge = Edge> {
       for (const [id, edge] of newlyVisible) {
         this.pendingEdges.set(id, edge);
       }
-      // Add first batch immediately
-      let added = 0;
-      for (const [id, edge] of this.pendingEdges) {
-        if (added >= this.batchSize) break;
-        if (allVisibleEdges.has(id)) {
-          this.renderedEdges.set(id, edge);
-          hasChanges = true;
+      // Add first batch immediately only if not panning too fast
+      if (!this.isPanningFast) {
+        let added = 0;
+        for (const [id, edge] of this.pendingEdges) {
+          if (added >= this.batchSize) break;
+          if (allVisibleEdges.has(id)) {
+            this.renderedEdges.set(id, edge);
+            hasChanges = true;
+          }
+          this.pendingEdges.delete(id);
+          added++;
         }
-        this.pendingEdges.delete(id);
-        added++;
+      } else {
+        // Schedule a check for when panning stops (velocity becomes stale)
+        this.scheduleStaleVelocityCheck();
       }
     } else if (newlyVisible.size > 0) {
-      // Below threshold - add all new edges immediately
+      // Below threshold - add all new edges immediately (even when panning fast,
+      // since it's below threshold the performance impact is minimal)
       for (const [id, edge] of newlyVisible) {
         this.renderedEdges.set(id, edge);
       }
@@ -132,6 +180,41 @@ export class ProgressiveEdgeBatcher<EdgeType extends Edge = Edge> {
     }
 
     return this.cachedReturnMap;
+  }
+
+  /**
+   * Schedule a delayed check to detect when panning has stopped.
+   * If no updateVisibleEdges call happens for STALE_VELOCITY_THRESHOLD_MS,
+   * we assume the user has stopped panning and should trigger an update.
+   */
+  private scheduleStaleVelocityCheck() {
+    // Don't schedule multiple checks
+    if (this.staleCheckTimeoutId !== null) {
+      return;
+    }
+
+    this.staleCheckTimeoutId = setTimeout(() => {
+      this.staleCheckTimeoutId = null;
+
+      // Check if velocity data is stale (no recent updates)
+      const now = performance.now();
+      const timeSinceLastUpdate = now - this.lastUpdateTime;
+
+      if (timeSinceLastUpdate >= this.STALE_VELOCITY_THRESHOLD_MS) {
+        // No updates for a while - user has stopped panning
+        this.isPanningFast = false;
+        this.currentVelocity = 0;
+
+        // Trigger an update to process pending edges
+        if (this.pendingEdges.size > 0) {
+          this.dirty = true;
+          this.onUpdate?.();
+        }
+      } else {
+        // Still getting updates, schedule another check
+        this.scheduleStaleVelocityCheck();
+      }
+    }, this.STALE_VELOCITY_THRESHOLD_MS);
   }
 
   /**
@@ -183,31 +266,65 @@ export class ProgressiveEdgeBatcher<EdgeType extends Edge = Edge> {
    * Reset the batcher state.
    */
   reset() {
+    if (this.staleCheckTimeoutId !== null) {
+      clearTimeout(this.staleCheckTimeoutId);
+      this.staleCheckTimeoutId = null;
+    }
     this.pendingEdges.clear();
     this.renderedEdges.clear();
     this.cachedReturnMap = null;
     this.dirty = true;
+    // Reset velocity tracking
+    this.lastViewportPos = null;
+    this.lastUpdateTime = 0;
+    this.currentVelocity = 0;
+    this.isPanningFast = false;
   }
 
   /**
    * Update configuration.
    */
-  updateConfig(options: { threshold?: number; batchSize?: number }) {
+  updateConfig(options: { threshold?: number; batchSize?: number; maxPanVelocity?: number }) {
     if (options.threshold !== undefined) {
       this.threshold = options.threshold;
     }
     if (options.batchSize !== undefined) {
       this.batchSize = options.batchSize;
     }
+    if (options.maxPanVelocity !== undefined) {
+      this.maxPanVelocity = options.maxPanVelocity;
+    }
+  }
+
+  /**
+   * Get the current pan velocity in pixels per second.
+   */
+  getCurrentVelocity(): number {
+    return this.currentVelocity;
+  }
+
+  /**
+   * Check if currently panning too fast for progressive loading.
+   */
+  isPanningTooFast(): boolean {
+    return this.isPanningFast;
   }
 
   /**
    * Cleanup.
    */
   destroy() {
+    if (this.staleCheckTimeoutId !== null) {
+      clearTimeout(this.staleCheckTimeoutId);
+      this.staleCheckTimeoutId = null;
+    }
     this.pendingEdges.clear();
     this.renderedEdges.clear();
     this.cachedReturnMap = null;
     this.dirty = true;
+    this.lastViewportPos = null;
+    this.lastUpdateTime = 0;
+    this.currentVelocity = 0;
+    this.isPanningFast = false;
   }
 }

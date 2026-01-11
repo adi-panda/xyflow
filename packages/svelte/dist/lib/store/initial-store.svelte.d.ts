@@ -116,6 +116,7 @@ export declare function getInitialStore<NodeType extends Node = Node, EdgeType e
     progressiveNodeBatchSize: number;
     progressiveEdgeThreshold: number;
     progressiveEdgeBatchSize: number;
+    progressiveMaxPanVelocity: number;
     onerror: OnError;
     ondelete?: OnDelete<NodeType, EdgeType>;
     onbeforedelete?: OnBeforeDelete<NodeType, EdgeType>;

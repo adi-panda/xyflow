@@ -20,6 +20,10 @@ export class ViewportBatcher {
   private lastViewport: Viewport | null = null;
   private lastScheduleTime = -Infinity;
 
+  // RAF performance logging
+  private debugPerf: boolean = false;
+  private rafScheduleTime: number = 0;
+
   constructor(applyFn: (viewport: Viewport) => void, throttleMs = 0) {
     this.applyFn = applyFn;
     this.throttleMs = throttleMs;
@@ -46,7 +50,10 @@ export class ViewportBatcher {
   private ensureRaf() {
     if (this.rafId !== null) return;
 
+    this.rafScheduleTime = performance.now();
     const tick = () => {
+      const rafStart = performance.now();
+      const rafDelay = rafStart - this.rafScheduleTime;
       this.rafId = null;
 
       if (!this.pendingViewport) return;
@@ -56,12 +63,21 @@ export class ViewportBatcher {
       // Use rapid throttle during fast panning, normal throttle otherwise
       const currentThrottle = this.throttleMs;
 
+      let applied = false;
       // Apply update if throttle period has passed
       if (now - this.lastApplyTime >= currentThrottle) {
         const vp = this.pendingViewport;
         this.pendingViewport = null;
         this.lastApplyTime = now;
         this.applyFn(vp);
+        applied = true;
+      }
+
+      const rafDuration = performance.now() - rafStart;
+      if (this.debugPerf && (rafDelay > 500 || rafDuration > 500)) {
+        console.warn(
+          `[ViewportBatcher] SLOW RAF - delay: ${rafDelay.toFixed(1)}ms, duration: ${rafDuration.toFixed(1)}ms, applied: ${applied}`
+        );
       }
 
       // If we still have a pending viewport (either because we didn't apply due
@@ -92,5 +108,13 @@ export class ViewportBatcher {
     }
 
     this.pendingViewport = null;
+  }
+
+  /**
+   * Enable or disable RAF performance logging.
+   * When enabled, logs timing info for each RAF callback to help identify lag sources.
+   */
+  setDebugPerf(enabled: boolean): void {
+    this.debugPerf = enabled;
   }
 }

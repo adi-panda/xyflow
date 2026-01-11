@@ -408,6 +408,16 @@ export type SvelteFlowProps<
      */
     progressiveEdgeBatchSize?: number;
     /**
+     * Maximum pan velocity (in pixels per second) at which progressive loading will occur.
+     * When panning faster than this speed, new nodes/edges are queued but not rendered.
+     * Once the pan slows below this threshold, progressive loading resumes.
+     * This prevents lag spikes during fast panning.
+     * - 0 = disable velocity-based deferral (always load progressively)
+     * - 500-1000 = good values for typical use cases
+     * @default 0
+     */
+    progressiveMaxPanVelocity?: number;
+    /**
      * You can enable this prop to automatically pan the viewport while making a new connection.
      * @default true
      */

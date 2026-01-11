@@ -19,24 +19,47 @@ export declare class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     private batchSize;
     private threshold;
     private debug;
+    private debugPerf;
     private rafId;
     private accumulator;
     private isFlushing;
+    private rafScheduleTime;
+    private flushRafScheduleTime;
     private onUpdate;
     private cachedReturnMap;
     private cachedPendingMap;
     private dirty;
+    private maxPanVelocity;
+    private lastViewportPos;
+    private lastUpdateTime;
+    private currentVelocity;
+    private isPanningFast;
+    private staleCheckTimeoutId;
+    private readonly STALE_VELOCITY_THRESHOLD_MS;
     constructor(options: {
         threshold: number;
         batchSize: number;
         onUpdate?: () => void;
+        maxPanVelocity?: number;
     });
     /**
      * Update the visible nodes. Returns the nodes that should actually be rendered.
      * If there are too many new nodes, they'll be queued and added progressively.
+     *
+     * @param viewportPos - Optional viewport position for velocity tracking.
+     *   If maxPanVelocity is set, progressive loading only happens when velocity is below the threshold.
      */
-    updateVisibleNodes(allVisibleNodes: Map<string, InternalNode<NodeType>>, previouslyRenderedNodes: Map<string, InternalNode<NodeType>>): Map<string, InternalNode<NodeType>>;
+    updateVisibleNodes(allVisibleNodes: Map<string, InternalNode<NodeType>>, previouslyRenderedNodes: Map<string, InternalNode<NodeType>>, viewportPos?: {
+        x: number;
+        y: number;
+    }): Map<string, InternalNode<NodeType>>;
     private scheduleNextBatch;
+    /**
+     * Schedule a delayed check to detect when panning has stopped.
+     * If no updateVisibleNodes call happens for STALE_VELOCITY_THRESHOLD_MS,
+     * we assume the user has stopped panning and should start processing pending nodes.
+     */
+    private scheduleStaleVelocityCheck;
     /**
      * Get the currently rendered nodes.
      */
@@ -69,7 +92,21 @@ export declare class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     updateConfig(options: {
         threshold?: number;
         batchSize?: number;
+        maxPanVelocity?: number;
     }): void;
+    /**
+     * Enable or disable RAF performance logging.
+     * When enabled, logs timing info for each RAF callback to help identify lag sources.
+     */
+    setDebugPerf(enabled: boolean): void;
+    /**
+     * Get the current pan velocity in pixels per second.
+     */
+    getCurrentVelocity(): number;
+    /**
+     * Check if currently panning too fast for progressive loading.
+     */
+    isPanningTooFast(): boolean;
     /**
      * Cleanup.
      */

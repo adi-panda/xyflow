@@ -15,9 +15,16 @@ export declare class ViewportBatcher {
     private lastApplyTime;
     private lastViewport;
     private lastScheduleTime;
+    private debugPerf;
+    private rafScheduleTime;
     constructor(applyFn: (viewport: Viewport) => void, throttleMs?: number);
     schedule(viewport: Viewport): void;
     private ensureRaf;
     flush(): void;
     destroy(): void;
+    /**
+     * Enable or disable RAF performance logging.
+     * When enabled, logs timing info for each RAF callback to help identify lag sources.
+     */
+    setDebugPerf(enabled: boolean): void;
 }

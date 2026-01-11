@@ -18,11 +18,14 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
   private batchSize: number;
   private threshold: number;
   private debug: boolean = false; // Enable debug logging
+  private debugPerf: boolean = false; // Enable RAF performance logging
 
   // RAF and batching state
   private rafId: number | null = null;
   private accumulator: number = 0;
   private isFlushing: boolean = false;
+  private rafScheduleTime: number = 0; // When RAF was scheduled
+  private flushRafScheduleTime: number = 0; // When flush RAF was scheduled
 
   // Callback for when rendered nodes change
   private onUpdate: (() => void) | null = null;
@@ -32,20 +35,62 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
   private cachedPendingMap: Map<string, InternalNode<NodeType>> = new Map();
   private dirty: boolean = true;
 
-  constructor(options: { threshold: number; batchSize: number; onUpdate?: () => void }) {
+  // Velocity tracking for pan-speed-based loading
+  private maxPanVelocity: number; // pixels per second - only load when below this
+  private lastViewportPos: { x: number; y: number } | null = null;
+  private lastUpdateTime: number = 0;
+  private currentVelocity: number = 0;
+  private isPanningFast: boolean = false;
+  private staleCheckTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private readonly STALE_VELOCITY_THRESHOLD_MS = 100; // If no update for this long, assume stopped
+
+  constructor(options: {
+    threshold: number;
+    batchSize: number;
+    onUpdate?: () => void;
+    maxPanVelocity?: number;
+  }) {
     this.threshold = options.threshold;
     this.batchSize = options.batchSize;
     this.onUpdate = options.onUpdate ?? null;
+    this.maxPanVelocity = options.maxPanVelocity ?? 0; // 0 = disabled (always load)
   }
 
   /**
    * Update the visible nodes. Returns the nodes that should actually be rendered.
    * If there are too many new nodes, they'll be queued and added progressively.
+   *
+   * @param viewportPos - Optional viewport position for velocity tracking.
+   *   If maxPanVelocity is set, progressive loading only happens when velocity is below the threshold.
    */
   updateVisibleNodes(
     allVisibleNodes: Map<string, InternalNode<NodeType>>,
-    previouslyRenderedNodes: Map<string, InternalNode<NodeType>>
+    previouslyRenderedNodes: Map<string, InternalNode<NodeType>>,
+    viewportPos?: { x: number; y: number }
   ): Map<string, InternalNode<NodeType>> {
+    // Update velocity tracking if viewport position is provided
+    if (viewportPos && this.maxPanVelocity > 0) {
+      const now = performance.now();
+      if (this.lastViewportPos !== null && this.lastUpdateTime > 0) {
+        const dt = (now - this.lastUpdateTime) / 1000; // seconds
+        if (dt > 0) {
+          const dx = viewportPos.x - this.lastViewportPos.x;
+          const dy = viewportPos.y - this.lastViewportPos.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          this.currentVelocity = distance / dt; // pixels per second
+          this.isPanningFast = this.currentVelocity > this.maxPanVelocity;
+
+          if (this.debug) {
+            console.log(
+              `[NodeBatcher] velocity: ${this.currentVelocity.toFixed(0)} px/s, fast: ${this.isPanningFast}`
+            );
+          }
+        }
+      }
+      this.lastViewportPos = { ...viewportPos };
+      this.lastUpdateTime = now;
+    }
+
     // If progressive loading is disabled (threshold = 0), return all nodes immediately
     if (this.threshold === 0) {
       this.renderedNodes = allVisibleNodes;
@@ -124,9 +169,17 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
       }
       hasChanges = true; // Mark as changed so cache updates
 
-      // Start progressive loading (only if not already flushing)
-      if (!this.isFlushing) {
+      // Start progressive loading only if:
+      // 1. Not already flushing
+      // 2. Not panning too fast (or velocity tracking is disabled)
+      if (!this.isFlushing && !this.isPanningFast) {
         this.scheduleNextBatch();
+      } else if (this.isPanningFast) {
+        if (this.debug) {
+          console.log(`[NodeBatcher] Panning fast, deferring batch scheduling`);
+        }
+        // Schedule a check for when panning stops (velocity becomes stale)
+        this.scheduleStaleVelocityCheck();
       }
     } else if (newlyVisible.size > 0) {
       // Below threshold - add all new nodes immediately
@@ -139,6 +192,21 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
         this.renderedNodes.set(id, node);
       }
       hasChanges = true;
+    }
+
+    // If we have pending nodes and velocity just dropped below threshold, start processing
+    if (
+      this.pendingNodes.size > 0 &&
+      !this.isPanningFast &&
+      !this.isFlushing &&
+      this.rafId === null
+    ) {
+      if (this.debug) {
+        console.log(
+          `[NodeBatcher] Velocity dropped, starting to process ${this.pendingNodes.size} pending nodes`
+        );
+      }
+      this.scheduleNextBatch();
     }
 
     // Only create new Maps if something actually changed
@@ -156,7 +224,10 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
       return;
     }
 
+    this.rafScheduleTime = performance.now();
     this.rafId = requestAnimationFrame(() => {
+      const rafStart = performance.now();
+      const rafDelay = rafStart - this.rafScheduleTime;
       this.rafId = null;
 
       // Accumulate batch size (supports fractional values like 0.1)
@@ -189,11 +260,63 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
         this.onUpdate?.();
       }
 
+      const rafDuration = performance.now() - rafStart;
+      if (this.debugPerf && (rafDelay > 500 || rafDuration > 500)) {
+        console.warn(
+          `[NodeBatcher:scheduleNextBatch] SLOW RAF - delay: ${rafDelay.toFixed(1)}ms, duration: ${rafDuration.toFixed(1)}ms, added: ${added} nodes`
+        );
+      }
+
       // Schedule next batch if more pending
       if (this.pendingNodes.size > 0) {
         this.scheduleNextBatch();
       }
     });
+  }
+
+  /**
+   * Schedule a delayed check to detect when panning has stopped.
+   * If no updateVisibleNodes call happens for STALE_VELOCITY_THRESHOLD_MS,
+   * we assume the user has stopped panning and should start processing pending nodes.
+   */
+  private scheduleStaleVelocityCheck() {
+    // Don't schedule multiple checks
+    if (this.staleCheckTimeoutId !== null) {
+      return;
+    }
+
+    this.staleCheckTimeoutId = setTimeout(() => {
+      this.staleCheckTimeoutId = null;
+
+      // Check if velocity data is stale (no recent updates)
+      const now = performance.now();
+      const timeSinceLastUpdate = now - this.lastUpdateTime;
+
+      if (timeSinceLastUpdate >= this.STALE_VELOCITY_THRESHOLD_MS) {
+        // No updates for a while - user has stopped panning
+        this.isPanningFast = false;
+        this.currentVelocity = 0;
+
+        if (this.debug) {
+          console.log(
+            `[NodeBatcher] Velocity stale (${timeSinceLastUpdate.toFixed(0)}ms since last update), resetting to 0`
+          );
+        }
+
+        // Start processing pending nodes if we have any
+        if (this.pendingNodes.size > 0 && !this.isFlushing && this.rafId === null) {
+          if (this.debug) {
+            console.log(
+              `[NodeBatcher] Starting to process ${this.pendingNodes.size} pending nodes after pan stop`
+            );
+          }
+          this.scheduleNextBatch();
+        }
+      } else {
+        // Still getting updates, schedule another check
+        this.scheduleStaleVelocityCheck();
+      }
+    }, this.STALE_VELOCITY_THRESHOLD_MS);
   }
 
   /**
@@ -262,7 +385,10 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     // Mark that we're in flush mode to prevent updateVisibleNodes from interrupting
     this.isFlushing = true;
 
+    this.flushRafScheduleTime = performance.now();
     this.rafId = requestAnimationFrame(() => {
+      const rafStart = performance.now();
+      const rafDelay = rafStart - this.flushRafScheduleTime;
       this.rafId = null;
 
       let added = 0;
@@ -278,6 +404,13 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
         // Update cached pending map immediately to prevent flicker
         this.cachedPendingMap = new Map(this.pendingNodes);
         this.onUpdate?.();
+      }
+
+      const rafDuration = performance.now() - rafStart;
+      if (this.debugPerf && (rafDelay > 500 || rafDuration > 500)) {
+        console.warn(
+          `[NodeBatcher:flushGradually] SLOW RAF - delay: ${rafDelay.toFixed(1)}ms, duration: ${rafDuration.toFixed(1)}ms, added: ${added} nodes`
+        );
       }
 
       // Continue flushing if more pending
@@ -297,6 +430,10 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
+    if (this.staleCheckTimeoutId !== null) {
+      clearTimeout(this.staleCheckTimeoutId);
+      this.staleCheckTimeoutId = null;
+    }
     this.pendingNodes.clear();
     this.renderedNodes.clear();
     this.cachedReturnMap = null;
@@ -304,18 +441,48 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
     this.dirty = true;
     this.accumulator = 0;
     this.isFlushing = false;
+    // Reset velocity tracking
+    this.lastViewportPos = null;
+    this.lastUpdateTime = 0;
+    this.currentVelocity = 0;
+    this.isPanningFast = false;
   }
 
   /**
    * Update configuration.
    */
-  updateConfig(options: { threshold?: number; batchSize?: number }) {
+  updateConfig(options: { threshold?: number; batchSize?: number; maxPanVelocity?: number }) {
     if (options.threshold !== undefined) {
       this.threshold = options.threshold;
     }
     if (options.batchSize !== undefined) {
       this.batchSize = options.batchSize;
     }
+    if (options.maxPanVelocity !== undefined) {
+      this.maxPanVelocity = options.maxPanVelocity;
+    }
+  }
+
+  /**
+   * Enable or disable RAF performance logging.
+   * When enabled, logs timing info for each RAF callback to help identify lag sources.
+   */
+  setDebugPerf(enabled: boolean) {
+    this.debugPerf = enabled;
+  }
+
+  /**
+   * Get the current pan velocity in pixels per second.
+   */
+  getCurrentVelocity(): number {
+    return this.currentVelocity;
+  }
+
+  /**
+   * Check if currently panning too fast for progressive loading.
+   */
+  isPanningTooFast(): boolean {
+    return this.isPanningFast;
   }
 
   /**
@@ -326,11 +493,19 @@ export class ProgressiveNodeBatcher<NodeType extends Node = Node> {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
+    if (this.staleCheckTimeoutId !== null) {
+      clearTimeout(this.staleCheckTimeoutId);
+      this.staleCheckTimeoutId = null;
+    }
     this.pendingNodes.clear();
     this.renderedNodes.clear();
     this.cachedReturnMap = null;
     this.cachedPendingMap = new Map();
     this.dirty = true;
     this.isFlushing = false;
+    this.lastViewportPos = null;
+    this.lastUpdateTime = 0;
+    this.currentVelocity = 0;
+    this.isPanningFast = false;
   }
 }

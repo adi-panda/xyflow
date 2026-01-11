@@ -13,6 +13,8 @@ export class StaggeredResizeObserver {
     rafId = null;
     batchSize;
     listIndex = 0; // Pointer to avoid O(n) shift()
+    debugPerf = false; // Enable RAF performance logging
+    rafScheduleTime = 0; // When RAF was scheduled
     constructor(callback, batchSize = 5) {
         this.observer = new ResizeObserver(callback);
         this.batchSize = batchSize;
@@ -91,9 +93,16 @@ export class StaggeredResizeObserver {
     scheduleProcessing() {
         if (this.rafId !== null)
             return;
+        this.rafScheduleTime = performance.now();
         this.rafId = requestAnimationFrame(() => {
+            const rafStart = performance.now();
+            const rafDelay = rafStart - this.rafScheduleTime;
             this.rafId = null;
-            this.processBatch();
+            const processed = this.processBatch();
+            const rafDuration = performance.now() - rafStart;
+            if (this.debugPerf && (rafDelay > 500 || rafDuration > 500)) {
+                console.warn(`[StaggeredResizeObserver] SLOW RAF - delay: ${rafDelay.toFixed(1)}ms, duration: ${rafDuration.toFixed(1)}ms, observed: ${processed} elements`);
+            }
         });
     }
     processBatch() {
@@ -128,6 +137,7 @@ export class StaggeredResizeObserver {
         if (this.pendingObserveSet.size > 0) {
             this.scheduleProcessing();
         }
+        return processed;
     }
     /**
      * Update the batch size for processing.
@@ -140,5 +150,12 @@ export class StaggeredResizeObserver {
      */
     hasPending() {
         return this.pendingObserveSet.size > 0 || this.pendingUnobserve.size > 0;
+    }
+    /**
+     * Enable or disable RAF performance logging.
+     * When enabled, logs timing info for each RAF callback to help identify lag sources.
+     */
+    setDebugPerf(enabled) {
+        this.debugPerf = enabled;
     }
 }

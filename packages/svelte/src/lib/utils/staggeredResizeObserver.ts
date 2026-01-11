@@ -13,6 +13,8 @@ export class StaggeredResizeObserver {
   private rafId: number | null = null;
   private batchSize: number;
   private listIndex: number = 0; // Pointer to avoid O(n) shift()
+  private debugPerf: boolean = false; // Enable RAF performance logging
+  private rafScheduleTime: number = 0; // When RAF was scheduled
 
   constructor(callback: ResizeObserverCallback, batchSize = 5) {
     this.observer = new ResizeObserver(callback);
@@ -101,13 +103,24 @@ export class StaggeredResizeObserver {
   private scheduleProcessing(): void {
     if (this.rafId !== null) return;
 
+    this.rafScheduleTime = performance.now();
     this.rafId = requestAnimationFrame(() => {
+      const rafStart = performance.now();
+      const rafDelay = rafStart - this.rafScheduleTime;
       this.rafId = null;
-      this.processBatch();
+
+      const processed = this.processBatch();
+
+      const rafDuration = performance.now() - rafStart;
+      if (this.debugPerf && (rafDelay > 500 || rafDuration > 500)) {
+        console.warn(
+          `[StaggeredResizeObserver] SLOW RAF - delay: ${rafDelay.toFixed(1)}ms, duration: ${rafDuration.toFixed(1)}ms, observed: ${processed} elements`
+        );
+      }
     });
   }
 
-  private processBatch(): void {
+  private processBatch(): number {
     // Process unobserves first (they're cheap and prevent wasted work)
     for (const element of this.pendingUnobserve) {
       this.observer.unobserve(element);
@@ -142,6 +155,8 @@ export class StaggeredResizeObserver {
     if (this.pendingObserveSet.size > 0) {
       this.scheduleProcessing();
     }
+
+    return processed;
   }
 
   /**
@@ -156,5 +171,13 @@ export class StaggeredResizeObserver {
    */
   hasPending(): boolean {
     return this.pendingObserveSet.size > 0 || this.pendingUnobserve.size > 0;
+  }
+
+  /**
+   * Enable or disable RAF performance logging.
+   * When enabled, logs timing info for each RAF callback to help identify lag sources.
+   */
+  setDebugPerf(enabled: boolean): void {
+    this.debugPerf = enabled;
   }
 }

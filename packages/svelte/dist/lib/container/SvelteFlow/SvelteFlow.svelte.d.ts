@@ -61,6 +61,7 @@ declare class __sveltets_Render<NodeType extends Node = Node, EdgeType extends E
         progressiveNodeBatchSize?: number;
         progressiveEdgeThreshold?: number;
         progressiveEdgeBatchSize?: number;
+        progressiveMaxPanVelocity?: number;
         autoPanOnConnect?: boolean;
         autoPanOnNodeDrag?: boolean;
         defaultEdgeOptions?: import("../../types").DefaultEdgeOptions;

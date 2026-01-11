@@ -13,6 +13,8 @@ export declare class StaggeredResizeObserver {
     private rafId;
     private batchSize;
     private listIndex;
+    private debugPerf;
+    private rafScheduleTime;
     constructor(callback: ResizeObserverCallback, batchSize?: number);
     /**
      * Queue an element to be observed. The actual observe() call will be
@@ -42,4 +44,9 @@ export declare class StaggeredResizeObserver {
      * Check if there are pending observations.
      */
     hasPending(): boolean;
+    /**
+     * Enable or disable RAF performance logging.
+     * When enabled, logs timing info for each RAF callback to help identify lag sources.
+     */
+    setDebugPerf(enabled: boolean): void;
 }

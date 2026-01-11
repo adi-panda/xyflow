@@ -58,6 +58,9 @@
           store.updateNodeInternals(updates);
         }, 30); // Process 5 observe() calls per frame
 
+  // Enable RAF performance debugging
+  resizeObserver?.setDebugPerf(true);
+
   // Process pending resize updates after panning stops
   $effect(() => {
     if (!store.dragging && pendingResizeUpdates.size > 0) {
@@ -90,11 +93,11 @@
         position: absolute;
         transform: translate({node.internals.positionAbsolute.x}px, {node.internals.positionAbsolute
         .y}px);
-        width: {256}px;
-        height: {256}px;
+        width: {node.width ?? 256}px;
+        height: {node.height ?? 256}px;
         background: var(--xy-node-placeholder-background-color, rgba(200, 200, 200, 0.3));
         border: 1px dashed var(--xy-node-placeholder-border-color, rgba(150, 150, 150, 0.5));
-        border-radius: var(--xy-node-border-radius, 3px);
+        border-radius: 16px;
         pointer-events: none;
       "
     ></div>
