@@ -59,7 +59,7 @@
         }, 30); // Process 5 observe() calls per frame
 
   // Enable RAF performance debugging
-  resizeObserver?.setDebugPerf(true);
+  resizeObserver?.setDebugPerf(false);
 
   // Process pending resize updates after panning stops
   $effect(() => {
