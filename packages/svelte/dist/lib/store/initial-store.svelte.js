@@ -376,7 +376,7 @@ export function getInitialStore(signals) {
                     this._viewport = viewport;
                 }, this.viewportUpdateThrottle // Normal throttle (e.g., 0-33ms)
                 );
-                this.viewportBatcher.setDebugPerf(true);
+                this.viewportBatcher.setDebugPerf(false);
             }
         }
         setViewportUpdateSource(isInternal) {
@@ -400,7 +400,7 @@ export function getInitialStore(signals) {
                         this._progressiveTrigger++;
                     }
                 });
-                this.progressiveNodeBatcher.setDebugPerf(true);
+                this.progressiveNodeBatcher.setDebugPerf(false);
             }
         }
         flushProgressiveNodes() {
