@@ -1,6 +1,6 @@
 {
   "name": "@adipanda/xyflow-svelte",
-  "version": "1.5.4-krea.0",
+  "version": "1.5.5-krea.0",
   "description": "Svelte Flow - A highly customizable Svelte library for building node-based editors, workflow systems, diagrams and more.",
   "keywords": [
     "svelte",
